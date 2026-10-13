@@ -2,7 +2,6 @@ import { ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import { $, button, input, sizeLabel } from './dom';
 import { getActiveTab } from './state';
 import { t } from './i18n';
-import { isBookmarked } from './bookmarks';
 
 export function refreshToolbar() {
   const tab = getActiveTab();
@@ -19,7 +18,7 @@ export function refreshToolbar() {
   for (const id of ['zoom-in', 'zoom-out', 'rotate', 'find-toggle']) button(id).disabled = !pdf;
   button('print').disabled = !pdf || !tab.canPrint;
   button('bookmark-toggle').disabled = !pdf;
-  button('bookmark-toggle').setAttribute('aria-pressed', String(!!pdf && isBookmarked(tab)));
+  button('bookmark-toggle').setAttribute('aria-pressed', String(!!pdf && tab.bookmarks.some(bookmark => bookmark.page === viewer.currentPageNumber)));
   $('document-status').textContent = tab.rendered ? info.name : t('status.loading');
   $('document-details').textContent = pdf ? `${pdf.numPages} ${t('status.pages')} · ${sizeLabel(info.size)}` : sizeLabel(info.size);
   const zoom = $<HTMLSelectElement>('zoom');

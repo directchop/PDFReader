@@ -1,6 +1,8 @@
 import * as bridge from './bridge';
 import { getActiveTab, type ReaderTab } from './state';
 import { t } from './i18n';
+import { refreshToolbar } from './toolbar';
+import { renderSidebar } from './sidebar';
 
 export function isBookmarked(tab: ReaderTab, page = tab.viewer.currentPageNumber) {
   return tab.bookmarks.some(bookmark => bookmark.page === page);
@@ -38,4 +40,6 @@ export async function toggleCurrentBookmark() {
   }
   tab.bookmarks.sort((a, b) => a.page - b.page);
   await bridge.saveBookmarks(tab.info, tab.bookmarks);
+  refreshToolbar();
+  await renderSidebar();
 }

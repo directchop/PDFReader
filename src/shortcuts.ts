@@ -60,11 +60,7 @@ export function registerShortcuts() {
       showPrint();
     } else if (mod && key === 'd' && active?.pdf) {
       event.preventDefault();
-      run(async () => {
-        await toggleCurrentBookmark();
-        const bookmarked = active.bookmarks.some(item => item.page === active.viewer.currentPageNumber);
-        document.getElementById('bookmark-toggle')?.setAttribute('aria-pressed', String(bookmarked));
-      });
+      run(() => toggleCurrentBookmark());
     } else if (mod && key === 'w' && active) {
       event.preventDefault();
       run(() => closeTab(active));

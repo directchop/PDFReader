@@ -137,8 +137,6 @@ button('show-search-results').onclick = () => {
 };
 button('bookmark-toggle').onclick = () => run(async () => {
   await toggleCurrentBookmark();
-  refreshToolbar();
-  await renderSidebar();
 });
 button('previous-page').onclick = () => {
   const tab = getActiveTab();
