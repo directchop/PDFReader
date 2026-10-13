@@ -254,7 +254,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     bookmarks: [],
     modified: false,
     annotationMode: AnnotationEditorType.NONE,
-    annotationColor: '#ffff00',
+    annotationColors: { highlight: '#ffff00', text: '#1f2933', ink: '#f44336' },
     annotationThickness: 3,
     annotationFontSize: 14,
     disposed: false,

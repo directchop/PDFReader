@@ -113,6 +113,7 @@ const ja = {
   'annotation.blue': '青色',
   'annotation.pink': 'ピンク',
   'annotation.red': '赤色',
+  'annotation.dark': '濃いグレー',
   'annotation.thickness': '太さ',
   'annotation.fontSize': '文字サイズ',
   'annotation.saveCopy': '別名で保存',
@@ -172,7 +173,7 @@ const ja = {
   'error.file_not_found': 'ファイルが見つからないか、アクセスできません。',
   'error.cannot_open': 'ファイルを開けません。アクセス権を確認してください。',
   'error.not_a_file': '通常のPDFファイルを選択してください。',
-  'error.too_large': '開けるPDFは1 GBまでです。',
+  'error.too_large': 'PDFファイルは1 GBまでです。',
   'error.not_pdf': 'PDF形式のファイルではありません。',
   'error.invalid_bookmark': 'しおりの内容が無効です。',
   'error.too_many_open': '同時に開けるPDFは12件です。タブを閉じてください。',
@@ -186,6 +187,7 @@ const ja = {
   'error.open_pdf': 'PDFを開けませんでした。',
   'error.cannot_overwrite_original': '元のPDFには保存できません。別のファイル名を選択してください。',
   'error.invalid_save_token': '保存の有効期限が切れました。もう一度保存してください。',
+  'error.cannot_save': 'PDFの保存に失敗しました。保存先とアクセス権を確認してください。',
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
@@ -298,6 +300,7 @@ const en: Record<keyof typeof ja, string> = {
   'annotation.blue': 'Blue',
   'annotation.pink': 'Pink',
   'annotation.red': 'Red',
+  'annotation.dark': 'Dark gray',
   'annotation.thickness': 'Thickness',
   'annotation.fontSize': 'Font size',
   'annotation.saveCopy': 'Save as copy',
@@ -371,6 +374,7 @@ const en: Record<keyof typeof ja, string> = {
   'error.open_pdf': 'Could not open the PDF.',
   'error.cannot_overwrite_original': 'The original PDF cannot be overwritten. Choose a different file name.',
   'error.invalid_save_token': 'The save request expired. Please try saving again.',
+  'error.cannot_save': 'Could not save the PDF. Check the destination and its permissions.',
 };
 
 function storedChoice(): LocaleChoice {

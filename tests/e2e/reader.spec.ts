@@ -298,6 +298,31 @@ test('free-text annotations save as a PDF copy and render when reopened', async 
   )).toBe(true);
 });
 
+test('annotation swatches remember separate colors for each tool', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#annotate-toggle').click();
+  const color = (hex: string) => page.locator(`[data-annotation-color="${hex}"]`);
+
+  await page.locator('[data-annotation-mode="9"]').click();
+  await expect(color('#ffff00')).toHaveAttribute('aria-pressed', 'true');
+  await color('#00c853').click();
+  await page.locator('[data-annotation-mode="3"]').click();
+  await expect(color('#1f2933')).toHaveAttribute('aria-pressed', 'true');
+  await color('#ff5ca8').click();
+  await page.locator('[data-annotation-mode="15"]').click();
+  await expect(color('#f44336')).toHaveAttribute('aria-pressed', 'true');
+  await color('#1f2933').click();
+  await page.locator('[data-annotation-mode="3"]').click();
+  await expect(color('#ff5ca8')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('[data-annotation-mode="9"]').click();
+  await expect(color('#00c853')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('[data-annotation-mode="15"]').click();
+  await expect(color('#1f2933')).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('ink strokes mark a document as modified', async ({ page }) => {
   await useJapanese(page);
   await page.goto('/');

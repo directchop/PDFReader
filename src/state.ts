@@ -16,7 +16,7 @@ export interface ReaderTab {
   bookmarks: Bookmark[];
   modified: boolean;
   annotationMode: number;
-  annotationColor: string;
+  annotationColors: { highlight: string; text: string; ink: string };
   annotationThickness: number;
   annotationFontSize: number;
   outline?: Awaited<ReturnType<PDFDocumentProxy['getOutline']>>;
