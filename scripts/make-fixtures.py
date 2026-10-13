@@ -1,5 +1,6 @@
 """Generate original, synthetic PDF fixtures. Requires reportlab and pypdf."""
 from pathlib import Path
+import sys
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
@@ -8,6 +9,42 @@ from pypdf import PdfReader, PdfWriter
 dest = Path(__file__).resolve().parents[1] / 'tests' / 'fixtures'
 dest.mkdir(parents=True, exist_ok=True)
 pdfmetrics.registerFont(UnicodeCIDFont('HeiseiMin-W3'))
+
+def generate_forms_fixture():
+    form_sample = dest / 'forms-sample.pdf'
+    form_canvas = canvas.Canvas(str(form_sample), pagesize=(595.28, 841.89))
+    form_canvas.setTitle('PDFReader - Forms sample')
+    form_canvas.setFont('Helvetica-Bold', 18)
+    form_canvas.drawString(48, 770, 'AcroForm test fixture')
+    form_canvas.setFont('Helvetica', 12)
+    form_canvas.drawString(48, 720, 'Name')
+    form_canvas.acroForm.textfield(
+        name='applicant',
+        tooltip='Name',
+        x=100,
+        y=700,
+        width=260,
+        height=26,
+        fontName='Helvetica',
+        fontSize=12,
+    )
+    form_canvas.drawString(48, 660, 'Approved')
+    form_canvas.acroForm.checkbox(
+        name='approved',
+        tooltip='Approved',
+        x=100,
+        y=650,
+        size=18,
+        buttonStyle='check',
+        checked=False,
+    )
+    form_canvas.save()
+
+if '--forms-only' in sys.argv:
+    generate_forms_fixture()
+    print('Generated AcroForm fixture in', dest)
+    raise SystemExit(0)
+
 sample = dest / 'reading-sample.pdf'
 c = canvas.Canvas(str(sample), pagesize=(595.28, 841.89))
 c.setTitle('PDFReader - Reading sample')
@@ -56,4 +93,5 @@ with (dest / 'long-sample.pdf').open('wb') as f:
     writer.write(f)
 (dest / 'broken.pdf').write_bytes(b'%PDF-1.7\nNot a valid document.\n%%EOF')
 (dest / 'not-a-pdf.txt').write_text('Not a PDF.', encoding='utf-8')
-print('Generated five synthetic fixtures in', dest)
+generate_forms_fixture()
+print('Generated six synthetic fixtures in', dest)

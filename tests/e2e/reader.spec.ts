@@ -1,11 +1,15 @@
 import { expect, test, type Page } from '@playwright/test';
 import path from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 
 const fixture = (name: string) => path.resolve('tests/fixtures', name);
-async function open(page: Page, names = ['reading-sample.pdf']) {
+async function openPaths(page: Page, files: string[]) {
   const chooser = page.waitForEvent('filechooser');
   await page.locator('#open').click();
-  await (await chooser).setFiles(names.map(fixture));
+  await (await chooser).setFiles(files);
+}
+async function open(page: Page, names = ['reading-sample.pdf']) {
+  await openPaths(page, names.map(fixture));
 }
 async function ready(page: Page, name = 'reading-sample.pdf') {
   await expect(page.locator('#document-status')).toHaveText(name);
@@ -14,6 +18,16 @@ async function ready(page: Page, name = 'reading-sample.pdf') {
 
 async function useJapanese(page: Page) {
   await page.addInitScript(() => localStorage.setItem('pdfreader.locale', 'ja'));
+}
+
+async function addTextNote(page: Page, text: string) {
+  await page.locator('#annotate-toggle').click();
+  await page.locator('[data-annotation-mode="3"]').click();
+  const pageBox = await page.locator('.page[data-page-number="1"]').boundingBox();
+  if (!pageBox) throw new Error('Page 1 is not visible');
+  await page.mouse.click(pageBox.x + pageBox.width * .55, pageBox.y + pageBox.height * .4);
+  await page.locator('.freeTextEditor .internal').last().fill(text);
+  await page.mouse.click(pageBox.x + pageBox.width * .72, pageBox.y + pageBox.height * .55);
 }
 
 test('local rendering, Japanese search, navigation, outline, zoom, rotation, and tabs', async ({ page }) => {
@@ -259,4 +273,92 @@ test('presentation mode enters with F5 and restores the previous zoom on exit', 
   await page.keyboard.press('Escape');
   await expect(page.locator('#app')).not.toHaveClass(/presenting/);
   await expect(page.locator('#zoom')).toHaveValue(before);
+});
+
+test('free-text annotations save as a PDF copy and render when reopened', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'メモ');
+  await expect(page.locator('.tab-main.modified')).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  const download = await downloadPromise;
+  const savedPath = path.resolve('test-results', download.suggestedFilename());
+  await download.saveAs(savedPath);
+  const data = await readFile(savedPath);
+  expect(data.subarray(0, 5).toString()).toBe('%PDF-');
+  expect(data.length).toBeGreaterThan((await stat(fixture('reading-sample.pdf'))).size);
+
+  await openPaths(page, [savedPath]);
+  await ready(page, download.suggestedFilename());
+  await expect.poll(() => page.locator('.annotationLayer, .annotationEditorLayer').evaluateAll(layers =>
+    layers.some(layer => layer.textContent?.includes('メモ')),
+  )).toBe(true);
+});
+
+test('ink strokes mark a document as modified', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#annotate-toggle').click();
+  await page.locator('[data-annotation-mode="15"]').click();
+  const box = await page.locator('.page[data-page-number="1"] canvas').first().boundingBox();
+  if (!box) throw new Error('Page canvas is not visible');
+  await page.mouse.move(box.x + box.width * .32, box.y + box.height * .36);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * .4, box.y + box.height * .4, { steps: 6 });
+  await page.mouse.move(box.x + box.width * .47, box.y + box.height * .35, { steps: 6 });
+  await page.mouse.up();
+  await page.locator('[data-annotation-mode="0"]').click();
+  await expect(page.locator('.tab-main.modified')).toBeVisible();
+});
+
+test('AcroForm fields are saved as a copy and retain their values', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page, ['forms-sample.pdf']);
+  await ready(page, 'forms-sample.pdf');
+  const nameField = page.locator('.annotationLayer input[type="text"]');
+  const approvedField = page.locator('.annotationLayer input[type="checkbox"]');
+  await nameField.focus();
+  await page.keyboard.press('Control+d');
+  await page.keyboard.press('F5');
+  await expect(page.locator('#bookmark-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#app')).not.toHaveClass(/presenting/);
+  await nameField.fill('PDFReader');
+  await approvedField.check();
+  await expect(page.locator('.tab-main.modified')).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  const download = await downloadPromise;
+  const savedPath = path.resolve('test-results', download.suggestedFilename());
+  await download.saveAs(savedPath);
+  const data = await readFile(savedPath);
+  expect(data.subarray(0, 5).toString()).toBe('%PDF-');
+  expect(data.length).toBeGreaterThan((await stat(fixture('forms-sample.pdf'))).size);
+
+  await openPaths(page, [savedPath]);
+  await ready(page, download.suggestedFilename());
+  await expect(page.locator('.annotationLayer input[type="text"]').last()).toHaveValue('PDFReader');
+  await expect(page.locator('.annotationLayer input[type="checkbox"]').last()).toBeChecked();
+});
+
+test('modified tabs can cancel or discard the unsaved-changes dialog', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'メモ');
+  await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('#unsaved-cancel').click();
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
+  await page.locator('#unsaved-discard').click();
+  await expect(page.getByRole('tab')).toHaveCount(0);
 });

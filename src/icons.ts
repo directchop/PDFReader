@@ -17,6 +17,7 @@ const paths: Record<string, string> = {
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/>',
   layout: '<path d="M12 7v14m0-14C7 3 3 5 3 5v14s4-2 9 2m0-14c5-4 9-2 9-2v14s-4-2-9 2"/>',
   bookmark: '<path d="M6 4h12v17l-6-4-6 4z"/>',
+  annotate: '<path d="m14 5 5 5M4 20l4.5-1 11-11a2.1 2.1 0 0 0-3-3l-11 11L4 20Z"/><path d="M12 21h8"/>',
   edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2m3 0-1 15H6L5 6m4 4v7m6-7v7"/>',
   present: '<path d="M3 4h18v13H3zM8 21l4-4 4 4"/><path d="m10 8 5 2.5-5 2.5z"/>',

@@ -14,6 +14,11 @@ export interface ReaderTab {
   task: PDFDocumentLoadingTask;
   pdf?: PDFDocumentProxy;
   bookmarks: Bookmark[];
+  modified: boolean;
+  annotationMode: number;
+  annotationColor: string;
+  annotationThickness: number;
+  annotationFontSize: number;
   outline?: Awaited<ReturnType<PDFDocumentProxy['getOutline']>>;
   disposed: boolean;
   query: string;

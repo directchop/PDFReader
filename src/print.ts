@@ -69,7 +69,13 @@ export async function preparePrint() {
       const canvas = document.createElement('canvas');
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
-      await page.render({ canvas, viewport, intent: 'print', annotationMode: AnnotationMode.ENABLE }).promise;
+      await page.render({
+        canvas,
+        viewport,
+        intent: 'print',
+        annotationMode: AnnotationMode.ENABLE_STORAGE,
+        printAnnotationStorage: tab.pdf.annotationStorage.print,
+      }).promise;
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error(t('print.imageFailed')))));
       canvas.width = canvas.height = 0;
       if (generation !== printGeneration) return;

@@ -146,7 +146,7 @@ export async function renderSidebar() {
         const canvas = el.querySelector('canvas')!;
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
-        await page.render({ canvas, viewport, annotationMode: AnnotationMode.ENABLE }).promise;
+        await page.render({ canvas, viewport, annotationMode: AnnotationMode.ENABLE_STORAGE }).promise;
       })().catch(() => {
         /* Closing or switching a tab can cancel a thumbnail. */
       });

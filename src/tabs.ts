@@ -1,4 +1,4 @@
-import { AnnotationMode, GlobalWorkerOptions, PasswordResponses, PermissionFlag, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { AnnotationEditorType, AnnotationMode, GlobalWorkerOptions, PasswordResponses, PermissionFlag, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { EventBus, PDFFindController, PDFLinkService, PDFViewer, ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import * as bridge from './bridge';
 import type { ReadingPosition } from './bridge';
@@ -11,6 +11,8 @@ import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
 import { refreshFindCount, search } from './find';
+import { closeAnnotationBar, highlightColors, refreshAnnotationToolbar, saveAsCopy } from './annotations';
+import { requestUnsavedChoice } from './unsaved';
 
 let sessionTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressSessionSave = false;
@@ -51,6 +53,26 @@ function handlePassword(tab: ReaderTab, name: string, update: (password: string)
   input('password').value = '';
   $<HTMLDialogElement>('password-dialog').showModal();
   input('password').focus();
+}
+
+function trackModifiedState(tab: ReaderTab) {
+  if (!tab.pdf) return;
+  const refresh = () => {
+    refreshTabs();
+    if (getActiveTab() === tab) refreshAnnotationToolbar();
+  };
+  const storage = tab.pdf.annotationStorage as unknown as {
+    onSetModified: (() => void) | null;
+    onResetModified: (() => void) | null;
+  };
+  storage.onSetModified = () => {
+    tab.modified = true;
+    refresh();
+  };
+  storage.onResetModified = () => {
+    tab.modified = false;
+    refresh();
+  };
 }
 
 function loadPdf(info: bridge.DocumentInfo, tab: ReaderTab, onReadError: (error: unknown) => void) {
@@ -106,8 +128,11 @@ export function refreshTabs() {
     item.className = `tab${getActiveTab() === tab ? ' active' : ''}`;
     const main = document.createElement('button');
     main.className = 'tab-main';
+    main.classList.toggle('modified', tab.modified);
     main.role = 'tab';
     main.setAttribute('aria-selected', String(getActiveTab() === tab));
+    if (tab.modified) main.setAttribute('aria-description', t('annotation.unsaved'));
+    else main.removeAttribute('aria-description');
     main.title = tab.info.path;
     main.innerHTML = `${icon('file')}<span></span>`;
     main.querySelector('span')!.textContent = tab.info.name;
@@ -123,6 +148,8 @@ export function refreshTabs() {
 }
 
 export function activate(tab?: ReaderTab) {
+  const previous = getActiveTab();
+  if (previous !== tab) closeAnnotationBar(previous);
   setActiveTab(tab);
   scheduleSessionSave();
   $('home').hidden = !!tab;
@@ -136,6 +163,7 @@ export function activate(tab?: ReaderTab) {
     input('match-case').checked = tab.matchCase;
     refreshFindCount();
     refreshToolbar();
+    refreshAnnotationToolbar();
     void renderSidebar();
     requestAnimationFrame(() => {
       if (getActiveTab() === tab && tab.pdf) tab.viewer.update();
@@ -182,18 +210,22 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   const links = new PDFLinkService({ eventBus: bus, ignoreDestinationZoom: true });
   links.externalLinkEnabled = false;
   const find = new PDFFindController({ eventBus: bus, linkService: links });
-  const viewer = new PDFViewer({
+  const viewerOptions = {
     container,
     eventBus: bus,
     linkService: links,
     findController: find,
     textLayerMode: 1,
-    annotationMode: AnnotationMode.ENABLE,
+    annotationMode: AnnotationMode.ENABLE_FORMS,
+    annotationEditorMode: AnnotationEditorType.NONE,
+    enableHighlightFloatingButton: true,
+    annotationEditorHighlightColors: highlightColors,
     enablePermissions: true,
     enableAutoLinking: false,
     maxCanvasPixels: 16 * 1024 * 1024,
     imageResourcesPath: '/pdfjs/images/',
-  });
+  };
+  const viewer = new PDFViewer(viewerOptions);
   links.setViewer(viewer);
   const tab: ReaderTab = {
     info,
@@ -205,6 +237,11 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     find,
     task: null!,
     bookmarks: [],
+    modified: false,
+    annotationMode: AnnotationEditorType.NONE,
+    annotationColor: '#ffff00',
+    annotationThickness: 3,
+    annotationFontSize: 14,
     disposed: false,
     query: '',
     matchCase: false,
@@ -281,6 +318,10 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     };
     if (getActiveTab() === tab) refreshFindCount();
   });
+  bus.on('annotationeditormodechanged', (event: { mode: number }) => {
+    tab.annotationMode = event.mode;
+    if (getActiveTab() === tab) refreshAnnotationToolbar();
+  });
   try {
     const { pdf, canPrint, outline } = await load.loaded;
     tab.bookmarks = await bridge.bookmarks(info).catch(() => []);
@@ -289,6 +330,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     tab.canPrint = canPrint;
     links.setDocument(pdf);
     viewer.setDocument(pdf);
+    trackModifiedState(tab);
     tab.outline = outline;
     if (tab.disposed) return;
     if (getActiveTab() === tab) {
@@ -335,10 +377,14 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
   tab.info = reloadedInfo;
   tab.task = load.task;
   tab.pdf = loaded.pdf;
+  tab.modified = false;
   tab.canPrint = loaded.canPrint;
   tab.outline = loaded.outline;
   tab.bookmarks = bookmarks;
   tab.rendered = false;
+  trackModifiedState(tab);
+  refreshTabs();
+  if (getActiveTab() === tab) refreshAnnotationToolbar();
   loadReady = true;
   await oldTask.destroy().catch(() => {});
   if (getActiveTab() === tab) {
@@ -349,8 +395,13 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
   return tab;
 }
 
-export async function closeTab(tab: ReaderTab) {
+export async function closeTab(tab: ReaderTab, resolveUnsaved = false) {
   if (tab.disposed) return;
+  if (tab.modified && !resolveUnsaved) {
+    const choice = await requestUnsavedChoice([tab]);
+    if (choice === 'cancel') return;
+    if (choice === 'save' && !await saveAsCopy(tab)) return;
+  }
   try {
     await flushPosition(tab);
   } catch (error) {

@@ -18,11 +18,14 @@ import { t } from './i18n';
 import { toggleCurrentBookmark } from './bookmarks';
 import { setFullscreen, syncFullscreen } from './fullscreen';
 import { exitPresentation, initializePresentation } from './presentation';
+import { initializeAnnotations, refreshAnnotationToolbar, saveAsCopy } from './annotations';
+import { requestUnsavedChoice } from './unsaved';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 mountIcons();
 initializePrint();
 initializePresentation();
+initializeAnnotations();
 const passwordDialog = $<HTMLDialogElement>('password-dialog');
 const sidebarPreferencesKey = 'pdfreader.sidebar';
 const sidebar = $('sidebar');
@@ -104,7 +107,11 @@ button('clear-recent').onclick = () => run(async () => {
   await bridge.clearRecent();
   await refreshRecent();
 });
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', event => {
+  if (!bridge.desktop && tabs.some(tab => tab.modified)) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
   for (const tab of tabs) void flushPosition(tab).catch(() => {});
   void flushSession();
 });
@@ -150,6 +157,7 @@ input('page-number').onchange = () => {
   const tab = getActiveTab();
   if (tab?.pdf) tab.viewer.currentPageNumber = Math.max(1, Math.min(tab.pdf.numPages, Number(input('page-number').value) || 1));
   refreshToolbar();
+  refreshAnnotationToolbar();
 };
 $<HTMLSelectElement>('zoom').onchange = () => setScale($<HTMLSelectElement>('zoom').value);
 button('zoom-in').onclick = () => zoomBy(1.2);
@@ -294,6 +302,28 @@ if (!bridge.desktop) {
   });
 } else {
   const currentWindow = getCurrentWindow();
+  let closePrompt = false;
+  let allowClose = false;
+  void currentWindow.onCloseRequested(event => {
+    const modified = tabs.filter(tab => tab.modified);
+    if (!modified.length || allowClose) return;
+    event.preventDefault();
+    if (closePrompt) return;
+    closePrompt = true;
+    void (async () => {
+      const choice = await requestUnsavedChoice(modified);
+      if (choice === 'cancel') return;
+      if (choice === 'save') {
+        for (const tab of modified) {
+          if (!await saveAsCopy(tab)) return;
+        }
+      }
+      allowClose = true;
+      await currentWindow.destroy();
+    })().catch(error => notify(String(error))).finally(() => {
+      closePrompt = false;
+    });
+  });
   void currentWindow.onResized(async () => {
     const fullscreen = await currentWindow.isFullscreen();
     syncFullscreen(fullscreen);
@@ -311,6 +341,7 @@ window.addEventListener('localechange', () => {
   syncFullscreen($('app').classList.contains('fullscreen'));
   refreshTabs();
   refreshToolbar();
+  refreshAnnotationToolbar();
   refreshFindCount();
   void renderSidebar();
   run(refreshRecent);
@@ -320,6 +351,11 @@ run(async () => {
   await bridge.onDocumentsReady(() => run(async () => enqueue(await bridge.takePending())));
   void bridge.onDocumentChanged(info => {
     if (localStorage.getItem('pdfreader.autoReload') === 'false') return;
+    const current = tabs.find(tab => tab.info.id === info.id);
+    if (current?.modified) {
+      notify(t('reload.unsaved', { name: info.name }));
+      return;
+    }
     run(async () => {
       const tab = await reloadDocument(info);
       if (tab) notify(t('reload.done', { name: info.name }));
