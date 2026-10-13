@@ -43,6 +43,42 @@ function schedulePositionSave(tab: ReaderTab) {
   }, 800);
 }
 
+function handlePassword(tab: ReaderTab, name: string, update: (password: string) => void, reason: number) {
+  if (tab.disposed) return;
+  activate(tab);
+  state.pendingPassword = { tab, update };
+  $('password-message').textContent = reason === PasswordResponses.INCORRECT_PASSWORD ? t('password.incorrect') : t('password.forDocument', { name });
+  input('password').value = '';
+  $<HTMLDialogElement>('password-dialog').showModal();
+  input('password').focus();
+}
+
+function loadPdf(info: bridge.DocumentInfo, tab: ReaderTab, onReadError: (error: unknown) => void) {
+  const transport = new LocalPdfTransport(info, onReadError);
+  const task = getDocument({
+    range: transport,
+    rangeChunkSize: 65536,
+    disableStream: true,
+    disableAutoFetch: true,
+    cMapUrl: '/pdfjs/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: '/pdfjs/standard_fonts/',
+    wasmUrl: '/pdfjs/wasm/',
+    enableXfa: false,
+  });
+  task.onPassword = (update: (password: string) => void, reason: number) => handlePassword(tab, info.name, update, reason);
+  const loaded = task.promise.then(async pdf => {
+    const permissions = await pdf.getPermissions();
+    const outline = await pdf.getOutline();
+    return {
+      pdf,
+      outline,
+      canPrint: !permissions || permissions.has(PermissionFlag.PRINT) || permissions.has(PermissionFlag.PRINT_HIGH_QUALITY),
+    };
+  });
+  return { task, loaded };
+}
+
 export async function flushPosition(tab: ReaderTab) {
   if (tab.positionTimer) clearTimeout(tab.positionTimer);
   tab.positionTimer = undefined;
@@ -159,21 +195,6 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     imageResourcesPath: '/pdfjs/images/',
   });
   links.setViewer(viewer);
-  const transport = new LocalPdfTransport(info, error => {
-    notify(message(error));
-    run(() => closeTab(tab));
-  });
-  const task = getDocument({
-    range: transport,
-    rangeChunkSize: 65536,
-    disableStream: true,
-    disableAutoFetch: true,
-    cMapUrl: '/pdfjs/cmaps/',
-    cMapPacked: true,
-    standardFontDataUrl: '/pdfjs/standard_fonts/',
-    wasmUrl: '/pdfjs/wasm/',
-    enableXfa: false,
-  });
   const tab: ReaderTab = {
     info,
     pane,
@@ -182,7 +203,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     viewer,
     links,
     find,
-    task,
+    task: null!,
     bookmarks: [],
     disposed: false,
     query: '',
@@ -193,15 +214,11 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   };
   tabs.push(tab);
   activate(tab);
-  task.onPassword = (update: (password: string) => void, reason: number) => {
-    if (tab.disposed) return;
-    activate(tab);
-    state.pendingPassword = { tab, update };
-    $('password-message').textContent = reason === PasswordResponses.INCORRECT_PASSWORD ? t('password.incorrect') : t('password.forDocument', { name: info.name });
-    input('password').value = '';
-    $<HTMLDialogElement>('password-dialog').showModal();
-    input('password').focus();
-  };
+  const load = loadPdf(info, tab, error => {
+    notify(message(error));
+    run(() => closeTab(tab));
+  });
+  tab.task = load.task;
   bus.on('pagesinit', () => {
     const position = tab.info.position;
     viewer.currentScaleValue = position?.scale ?? 'auto';
@@ -265,16 +282,14 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     if (getActiveTab() === tab) refreshFindCount();
   });
   try {
-    const pdf = await task.promise;
+    const { pdf, canPrint, outline } = await load.loaded;
     tab.bookmarks = await bridge.bookmarks(info).catch(() => []);
     if (tab.disposed) return;
     tab.pdf = pdf;
-    const permissions = await pdf.getPermissions();
-    if (tab.disposed) return;
-    tab.canPrint = !permissions || permissions.has(PermissionFlag.PRINT) || permissions.has(PermissionFlag.PRINT_HIGH_QUALITY);
+    tab.canPrint = canPrint;
     links.setDocument(pdf);
     viewer.setDocument(pdf);
-    tab.outline = await pdf.getOutline();
+    tab.outline = outline;
     if (tab.disposed) return;
     if (getActiveTab() === tab) {
       refreshToolbar();
@@ -299,31 +314,33 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     spread: tab.viewer.spreadMode,
     scroll: tab.viewer.scrollMode,
   };
-  tab.info = { ...info, position };
+  const reloadedInfo = { ...info, position };
+  let loadReady = false;
+  const load = loadPdf(reloadedInfo, tab, error => {
+    if (loadReady) notify(message(error));
+  });
+  let loaded: Awaited<typeof load.loaded>;
+  let bookmarks: bridge.Bookmark[];
+  try {
+    loaded = await load.loaded;
+    bookmarks = await bridge.bookmarks(reloadedInfo).catch(() => []);
+  } catch {
+    await load.task.destroy().catch(() => {});
+    notify(t('reload.failed', { name: info.name }));
+    return undefined;
+  }
+  const oldTask = tab.task;
+  tab.links.setDocument(loaded.pdf);
+  tab.viewer.setDocument(loaded.pdf);
+  tab.info = reloadedInfo;
+  tab.task = load.task;
+  tab.pdf = loaded.pdf;
+  tab.canPrint = loaded.canPrint;
+  tab.outline = loaded.outline;
+  tab.bookmarks = bookmarks;
   tab.rendered = false;
-  await tab.task.destroy();
-  const transport = new LocalPdfTransport(tab.info, error => {
-    notify(message(error));
-    run(() => closeTab(tab));
-  });
-  const task = getDocument({
-    range: transport,
-    rangeChunkSize: 65536,
-    disableStream: true,
-    disableAutoFetch: true,
-    cMapUrl: '/pdfjs/cmaps/',
-    cMapPacked: true,
-    standardFontDataUrl: '/pdfjs/standard_fonts/',
-    wasmUrl: '/pdfjs/wasm/',
-    enableXfa: false,
-  });
-  tab.task = task;
-  const pdf = await task.promise;
-  tab.pdf = pdf;
-  tab.links.setDocument(pdf);
-  tab.viewer.setDocument(pdf);
-  tab.outline = await pdf.getOutline();
-  tab.bookmarks = await bridge.bookmarks(tab.info).catch(() => []);
+  loadReady = true;
+  await oldTask.destroy().catch(() => {});
   if (getActiveTab() === tab) {
     refreshToolbar();
     await renderSidebar();
