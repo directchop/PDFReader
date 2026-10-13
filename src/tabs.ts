@@ -1,6 +1,7 @@
 import { AnnotationMode, GlobalWorkerOptions, PasswordResponses, PermissionFlag, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
+import { EventBus, PDFFindController, PDFLinkService, PDFViewer, ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import * as bridge from './bridge';
+import type { ReadingPosition } from './bridge';
 import { LocalPdfTransport } from './transport';
 import { icon } from './icons';
 import { $, button, input, message, notify, run } from './dom';
@@ -10,6 +11,34 @@ import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
 import { refreshFindCount } from './find';
+
+function schedulePositionSave(tab: ReaderTab) {
+  if (tab.positionTimer) clearTimeout(tab.positionTimer);
+  tab.positionTimer = setTimeout(() => {
+    tab.positionTimer = undefined;
+    void flushPosition(tab).catch(error => notify(message(error)));
+  }, 800);
+}
+
+export async function flushPosition(tab: ReaderTab) {
+  if (tab.positionTimer) clearTimeout(tab.positionTimer);
+  tab.positionTimer = undefined;
+  if (!tab.pdf || tab.disposed) return;
+  const scale = tab.viewer.currentScaleValue || 'auto';
+  const position: ReadingPosition = {
+    page: tab.viewer.currentPageNumber,
+    pages: tab.pdf.numPages,
+    scale,
+    rotation: tab.viewer.pagesRotation,
+    spread: tab.viewer.spreadMode,
+    scroll: tab.viewer.scrollMode,
+  };
+  try {
+    await bridge.savePosition(tab.info.id, position);
+  } catch (error) {
+    if (message(error) !== t('error.not_in_recent')) throw error;
+  }
+}
 
 export function refreshTabs() {
   $('tabs').replaceChildren();
@@ -139,7 +168,18 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     input('password').focus();
   };
   bus.on('pagesinit', () => {
-    viewer.currentScaleValue = 'auto';
+    const position = info.position;
+    viewer.currentScaleValue = position?.scale ?? 'auto';
+    if (position) {
+      viewer.pagesRotation = position.rotation;
+      if ([SpreadMode.NONE, SpreadMode.ODD, SpreadMode.EVEN].some(mode => mode === position.spread)) {
+        viewer.spreadMode = position.spread;
+      }
+      if ([ScrollMode.VERTICAL, ScrollMode.PAGE].some(mode => mode === position.scroll)) {
+        viewer.scrollMode = position.scroll;
+      }
+      viewer.currentPageNumber = position.page;
+    }
     if (getActiveTab() === tab) {
       refreshToolbar();
       void renderSidebar();
@@ -151,6 +191,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     if (getActiveTab() === tab) refreshToolbar();
   });
   bus.on('pagechanging', () => {
+    schedulePositionSave(tab);
     if (getActiveTab() !== tab) return;
     refreshToolbar();
     if (state.sidebarMode === 'pages' && Math.floor((viewer.currentPageNumber - 1) / 30) !== state.thumbnailGroup) {
@@ -159,8 +200,12 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     $('sidebar-content').querySelectorAll<HTMLElement>('.thumbnail').forEach(el => el.classList.toggle('active', Number(el.dataset.page) === viewer.currentPageNumber));
   });
   bus.on('scalechanging', () => {
+    schedulePositionSave(tab);
     if (getActiveTab() === tab) refreshToolbar();
   });
+  bus.on('rotationchanging', () => schedulePositionSave(tab));
+  bus.on('spreadmodechanged', () => schedulePositionSave(tab));
+  bus.on('scrollmodechanged', () => schedulePositionSave(tab));
   bus.on('updatefindmatchescount', (event: { matchesCount: { current: number; total: number } }) => {
     tab.matchCount = { state: 'matches', ...event.matchesCount };
     if (getActiveTab() === tab) refreshFindCount();
@@ -197,6 +242,11 @@ export async function loadDocument(info: bridge.DocumentInfo) {
 
 export async function closeTab(tab: ReaderTab) {
   if (tab.disposed) return;
+  try {
+    await flushPosition(tab);
+  } catch (error) {
+    notify(message(error));
+  }
   tab.disposed = true;
   if (state.pendingPassword?.tab === tab) {
     state.pendingPassword = undefined;

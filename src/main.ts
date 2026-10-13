@@ -4,14 +4,14 @@ import * as bridge from './bridge';
 import './style.css';
 import { mountIcons } from './icons';
 import { $, button, input, run } from './dom';
-import { activate, closeTab, enqueue, refreshTabs } from './tabs';
+import { activate, closeTab, enqueue, flushPosition, refreshTabs } from './tabs';
 import { renderSidebar } from './sidebar';
 import { hideFind, refreshFindCount, search, showFind } from './find';
 import { setScale, refreshToolbar, zoomBy } from './toolbar';
 import { cancelPrint, clearPrintOutput, initializePrint, preparePrint, showPrint } from './print';
 import { refreshRecent } from './recent';
 import { registerShortcuts } from './shortcuts';
-import { getActiveTab, state } from './state';
+import { getActiveTab, state, tabs } from './state';
 import { t } from './i18n';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -27,6 +27,9 @@ document.querySelector('.brand')!.addEventListener('click', event => {
 button('clear-recent').onclick = () => run(async () => {
   await bridge.clearRecent();
   await refreshRecent();
+});
+window.addEventListener('beforeunload', () => {
+  for (const tab of tabs) void flushPosition(tab).catch(() => {});
 });
 button('sidebar-toggle').onclick = () => {
   $('sidebar').hidden = !$('sidebar').hidden;

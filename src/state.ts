@@ -23,6 +23,7 @@ export interface ReaderTab {
   };
   canPrint: boolean;
   rendered: boolean;
+  positionTimer?: ReturnType<typeof setTimeout>;
 }
 
 export const tabs: ReaderTab[] = [];

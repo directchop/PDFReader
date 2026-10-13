@@ -1,6 +1,6 @@
 mod documents;
 
-use documents::{DocumentInfo, Library, OpenBatch, RecentFile};
+use documents::{DocumentInfo, Library, OpenBatch, ReadingPosition, RecentFileView};
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{Emitter, Manager, State};
 
@@ -27,8 +27,8 @@ fn take_pending(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
 }
 
 #[tauri::command]
-fn recent_documents(state: State<'_, SharedLibrary>) -> Result<Vec<RecentFile>, String> {
-    Ok(state.lock().map_err(|e| e.to_string())?.recent.clone())
+fn recent_documents(state: State<'_, SharedLibrary>) -> Result<Vec<RecentFileView>, String> {
+    Ok(state.lock().map_err(|e| e.to_string())?.recent_documents())
 }
 
 #[tauri::command]
@@ -46,6 +46,26 @@ async fn reopen_recent(
 #[tauri::command]
 fn clear_recent(state: State<'_, SharedLibrary>) -> Result<(), String> {
     state.lock().map_err(|e| e.to_string())?.clear_history()
+}
+
+#[tauri::command]
+fn remove_recent(path: String, state: State<'_, SharedLibrary>) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove_recent(&path)
+}
+
+#[tauri::command]
+fn save_position(
+    id: String,
+    position: ReadingPosition,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_position(&id, position)
 }
 
 #[tauri::command]
@@ -141,6 +161,8 @@ pub fn run() {
             recent_documents,
             reopen_recent,
             clear_recent,
+            remove_recent,
+            save_position,
             read_document_range,
             close_document,
             print_document

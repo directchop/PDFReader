@@ -118,3 +118,20 @@ test('switches to English in settings and preserves the locale after reload', as
   await expect(page.locator('#open')).toHaveText('Open PDF');
   await expect(page.getByRole('heading', { name: 'Recently opened' })).toBeVisible();
 });
+
+test('restores browser reading position after reopening a PDF', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    localStorage.setItem('pdfreader.locale', 'ja');
+  });
+  await page.goto('/');
+  await open(page, ['long-sample.pdf']);
+  await ready(page, 'long-sample.pdf');
+  await page.locator('#page-number').fill('20');
+  await page.locator('#page-number').press('Enter');
+  await expect(page.locator('#page-number')).toHaveValue('20');
+  await page.getByRole('button', { name: 'long-sample.pdf を閉じる' }).click();
+  await open(page, ['long-sample.pdf']);
+  await ready(page, 'long-sample.pdf');
+  await expect(page.locator('#page-number')).toHaveValue('20');
+});
