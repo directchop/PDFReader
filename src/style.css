@@ -26,7 +26,7 @@
   --shadow-lg: 0 24px 60px #0e1a1430, 0 4px 14px #0e1a1414;
   --page-shadow: 0 1px 3px #18241f1a, 0 6px 20px #18241f12;
   --radius: 8px;
-  --sidebar: 212px;
+  --sidebar: 240px;
   color: var(--text);
   background: var(--bg);
   color-scheme: light;
@@ -199,7 +199,8 @@ h2 { font-weight: 650; font-size: 14px; margin: 0; }
 #find-close { margin-left: auto; }
 .reader-body { display: flex; flex: 1; min-height: 0; }
 #sidebar { width: var(--sidebar); flex-shrink: 0; background: var(--surface-2); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-.sidebar-tabs { margin: 10px 12px 6px; }
+.sidebar-tabs { margin: 10px 8px 6px; }
+.sidebar-tabs button { flex: 1 1 0; min-width: 0; padding: 5px 2px; font-size: 10px; }
 #sidebar-content { overflow: auto; flex: 1; padding: 6px 12px 12px; scrollbar-width: thin; }
 .thumbnail { display: flex; flex-direction: column; width: 100%; gap: 7px; border: none; background: none; padding: 10px 8px 8px; margin-bottom: 4px; font-size: 11px; color: var(--text-3); border-radius: 10px; font-variant-numeric: tabular-nums; }
 .thumbnail:hover { background: var(--surface-hover); }
@@ -256,7 +257,6 @@ dialog input:not([type=checkbox]) { width: 100%; margin-top: 8px; padding: 9px 1
   .home { padding: 36px 28px 0; }
   .hero { grid-template-columns: 1fr; gap: 28px; }
   .local-badge, .home-footer > span:first-child { display: none; }
-  :root { --sidebar: 176px; }
   .find-field { width: 240px; }
 }
 @media (max-width: 1100px) { .primary.compact .button-label { display: none; } .primary.compact { padding: 6px; } }
@@ -277,7 +277,7 @@ dialog input:not([type=checkbox]) { width: 100%; margin-top: 8px; padding: 9px 1
 .search-result:hover, .search-result.active { background: var(--surface-hover); }
 .search-result-page { flex: 0 0 26px; color: var(--text-2); font-size: 11px; }
 .search-result-snippets { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.search-result-snippet { color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.search-result-snippet { color: var(--text-2); font-size: 11px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 .search-result mark { color: var(--accent-text); background: var(--accent-soft); }
 .search-results-more { padding: 8px; text-align: center; color: var(--text-3); font-size: 11px; }
 #app.presenting { background: #000; }

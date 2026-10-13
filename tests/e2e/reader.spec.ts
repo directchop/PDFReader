@@ -228,15 +228,17 @@ test('search results show safe contextual snippets and navigate by page', async 
   const rows = page.locator('.search-result');
   await expect(rows).toHaveCount(3);
   await expect(rows.first()).toContainText('日本語');
-  for (const mark of await rows.locator('mark').all()) {
-    await expect(mark).toHaveText('日本語');
-  }
+  const japaneseMarks = rows.locator('mark');
+  await expect(japaneseMarks).toHaveCount(3);
+  expect(await japaneseMarks.allTextContents()).toEqual(['日本語', '日本語', '日本語']);
   await page.locator('#find-input').fill('local');
   await page.locator('#find-input').press('Enter');
   await expect.poll(async () => new Set(await rows.evaluateAll(items => items.map(item => (item as HTMLElement).dataset.page))).size).toBe(3);
   await expect(rows).toHaveCount(3);
   await expect(rows.first()).toContainText('local');
-  await expect(rows.locator('mark')).toHaveCount(0);
+  const localMarks = rows.locator('mark');
+  await expect(localMarks).toHaveCount(6);
+  expect((await localMarks.allTextContents()).map(text => text.toLowerCase())).toEqual(Array(6).fill('local'));
   await page.locator('.search-result[data-page="3"]').click();
   await expect(page.locator('#page-number')).toHaveValue('3');
   await expect(page.locator('.search-result.active')).toHaveAttribute('data-page', '3');
