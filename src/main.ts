@@ -4,14 +4,15 @@ import * as bridge from './bridge';
 import './style.css';
 import { mountIcons } from './icons';
 import { $, button, input, run } from './dom';
-import { activate, closeTab, enqueue } from './tabs';
+import { activate, closeTab, enqueue, refreshTabs } from './tabs';
 import { renderSidebar } from './sidebar';
-import { hideFind, search, showFind } from './find';
+import { hideFind, refreshFindCount, search, showFind } from './find';
 import { setScale, refreshToolbar, zoomBy } from './toolbar';
 import { cancelPrint, clearPrintOutput, initializePrint, preparePrint, showPrint } from './print';
 import { refreshRecent } from './recent';
 import { registerShortcuts } from './shortcuts';
 import { getActiveTab, state } from './state';
+import { t } from './i18n';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 mountIcons();
@@ -120,7 +121,7 @@ document.addEventListener('click', event => {
   }
 }, true);
 if (!bridge.desktop) {
-  document.querySelector('.local-badge')!.textContent = 'ブラウザプレビュー';
+  document.querySelector('.local-badge [data-i18n]')!.textContent = t('local.browserPreview');
   window.addEventListener('dragover', event => event.preventDefault());
   window.addEventListener('drop', event => {
     event.preventDefault();
@@ -129,6 +130,14 @@ if (!bridge.desktop) {
     }
   });
 }
+window.addEventListener('localechange', () => {
+  refreshTabs();
+  refreshToolbar();
+  refreshFindCount();
+  void renderSidebar();
+  run(refreshRecent);
+  document.querySelector('.local-badge [data-i18n]')!.textContent = t(bridge.desktop ? 'local.badge' : 'local.browserPreview');
+});
 run(async () => {
   await bridge.onDocumentsReady(() => run(async () => enqueue(await bridge.takePending())));
   enqueue(await bridge.takePending());

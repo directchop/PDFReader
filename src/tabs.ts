@@ -8,6 +8,8 @@ import { getActiveTab, setActiveTab, state, tabs, type ReaderTab } from './state
 import { refreshToolbar } from './toolbar';
 import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
+import { describeError, t } from './i18n';
+import { refreshFindCount } from './find';
 
 export function refreshTabs() {
   $('tabs').replaceChildren();
@@ -25,7 +27,7 @@ export function refreshTabs() {
     const close = document.createElement('button');
     close.className = 'tab-close icon-button';
     close.innerHTML = icon('close');
-    close.setAttribute('aria-label', `${tab.info.name} を閉じる`);
+    close.setAttribute('aria-label', t('tab.close', { name: tab.info.name }));
     close.onclick = () => run(() => closeTab(tab));
     item.append(main, close);
     $('tabs').append(item);
@@ -43,7 +45,7 @@ export function activate(tab?: ReaderTab) {
   if (tab) {
     input('find-input').value = tab.query;
     input('match-case').checked = tab.matchCase;
-    $('find-count').textContent = tab.matchCount;
+    refreshFindCount();
     refreshToolbar();
     void renderSidebar();
     requestAnimationFrame(() => {
@@ -58,7 +60,7 @@ export function activate(tab?: ReaderTab) {
 
 export function enqueue(batch: bridge.OpenBatch) {
   state.opening = state.opening.then(async () => {
-    if (batch.errors.length) notify(batch.errors.join('\n'));
+    if (batch.errors.length) notify(batch.errors.map(error => `${error.name}: ${describeError(error.code)}`).join('\n'));
     for (const info of batch.documents) await loadDocument(info);
     await refreshRecent();
   }).catch(error => notify(message(error)));
@@ -72,7 +74,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   }
   const pane = document.createElement('div');
   pane.className = 'document-pane';
-  pane.innerHTML = '<div class="viewer-container" tabindex="0" aria-label="PDF文書"><div class="pdfViewer"></div></div><div class="loading-message">PDFを開いています…</div>';
+  pane.innerHTML = `<div class="viewer-container" tabindex="0" aria-label="${t('reader.document')}"><div class="pdfViewer"></div></div><div class="loading-message">${t('reader.opening')}</div>`;
   $('documents').append(pane);
   $('home').hidden = true;
   $('reader').hidden = false;
@@ -121,7 +123,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     disposed: false,
     query: '',
     matchCase: false,
-    matchCount: '',
+    matchCount: { state: 'idle', current: 0, total: 0 },
     canPrint: true,
     rendered: false,
   };
@@ -131,7 +133,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     if (tab.disposed) return;
     activate(tab);
     state.pendingPassword = { tab, update };
-    $('password-message').textContent = reason === PasswordResponses.INCORRECT_PASSWORD ? 'パスワードが違います。もう一度入力してください。' : `${info.name} を開くためのパスワードを入力してください。`;
+    $('password-message').textContent = reason === PasswordResponses.INCORRECT_PASSWORD ? t('password.incorrect') : t('password.forDocument', { name: info.name });
     input('password').value = '';
     $<HTMLDialogElement>('password-dialog').showModal();
     input('password').focus();
@@ -160,12 +162,15 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     if (getActiveTab() === tab) refreshToolbar();
   });
   bus.on('updatefindmatchescount', (event: { matchesCount: { current: number; total: number } }) => {
-    tab.matchCount = `${event.matchesCount.current} / ${event.matchesCount.total} 件`;
-    if (getActiveTab() === tab) $('find-count').textContent = tab.matchCount;
+    tab.matchCount = { state: 'matches', ...event.matchesCount };
+    if (getActiveTab() === tab) refreshFindCount();
   });
   bus.on('updatefindcontrolstate', (event: { state: number; matchesCount: { current: number; total: number } }) => {
-    tab.matchCount = event.state === 1 ? '見つかりません' : event.state === 3 ? '検索中…' : `${event.matchesCount.current} / ${event.matchesCount.total} 件`;
-    if (getActiveTab() === tab) $('find-count').textContent = tab.matchCount;
+    tab.matchCount = {
+      state: event.state === 1 ? 'no-results' : event.state === 3 ? 'searching' : 'matches',
+      ...event.matchesCount,
+    };
+    if (getActiveTab() === tab) refreshFindCount();
   });
   try {
     const pdf = await task.promise;
@@ -184,7 +189,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     }
   } catch (error) {
     if (!tab.disposed) {
-      notify(`${info.name}: PDFを開けませんでした。${message(error)}`);
+      notify(`${info.name}: ${t('error.open_pdf')} ${message(error)}`);
       await closeTab(tab);
     }
   }

@@ -16,7 +16,11 @@ export interface ReaderTab {
   disposed: boolean;
   query: string;
   matchCase: boolean;
-  matchCount: string;
+  matchCount: {
+    state: 'idle' | 'searching' | 'no-results' | 'matches';
+    current: number;
+    total: number;
+  };
   canPrint: boolean;
   rendered: boolean;
 }

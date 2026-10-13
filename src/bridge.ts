@@ -3,7 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 
 export interface DocumentInfo { id: string; name: string; path: string; size: number }
 export interface RecentFile { name: string; path: string }
-export interface OpenBatch { documents: DocumentInfo[]; errors: string[] }
+export interface OpenError { name: string; code: string }
+export interface OpenBatch { documents: DocumentInfo[]; errors: OpenError[] }
 
 export const desktop = isTauri();
 const browserFiles = new Map<string, File>();
@@ -11,12 +12,16 @@ const browserFiles = new Map<string, File>();
 export async function acceptBrowserFiles(files: File[]): Promise<OpenBatch> {
   const result: OpenBatch = { documents: [], errors: [] };
   for (const file of files) {
-    if (browserFiles.size >= 12 || file.size > 1024 ** 3) {
-      result.errors.push(`${file.name}: PDFは12件・1 GBまでです。`);
+    if (browserFiles.size >= 12) {
+      result.errors.push({ name: file.name, code: 'too_many_open' });
+      continue;
+    }
+    if (file.size > 1024 ** 3) {
+      result.errors.push({ name: file.name, code: 'too_large' });
       continue;
     }
     const header = new TextDecoder().decode(await file.slice(0, 1024).arrayBuffer());
-    if (!header.includes('%PDF-')) { result.errors.push(`${file.name}: PDF形式ではありません。`); continue; }
+    if (!header.includes('%PDF-')) { result.errors.push({ name: file.name, code: 'not_pdf' }); continue; }
     const id = crypto.randomUUID();
     browserFiles.set(id, file);
     result.documents.push({ id, name: file.name, path: file.name, size: file.size });
@@ -38,7 +43,7 @@ export async function openDocuments(): Promise<OpenBatch> {
 export async function readRange(id: string, begin: number, end: number): Promise<Uint8Array> {
   if (!desktop) {
     const file = browserFiles.get(id);
-    if (!file) throw new Error('PDFは閉じられています。');
+    if (!file) throw new Error('document_closed');
     return new Uint8Array(await file.slice(begin, end).arrayBuffer());
   }
   const data = await invoke<ArrayBuffer | number[]>('read_document_range', { id, begin, end });

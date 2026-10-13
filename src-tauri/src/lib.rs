@@ -38,9 +38,7 @@ async fn reopen_recent(
 ) -> Result<DocumentInfo, String> {
     let mut library = state.lock().map_err(|e| e.to_string())?;
     if !library.recent.iter().any(|r| r.path == path) {
-        return Err(
-            "最近使ったファイルの一覧にありません。開くボタンから選択してください。".into(),
-        );
+        return Err("not_in_recent".into());
     }
     library.open(&PathBuf::from(path))
 }

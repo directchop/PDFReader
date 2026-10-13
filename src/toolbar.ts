@@ -1,5 +1,6 @@
 import { $, button, input, sizeLabel } from './dom';
 import { getActiveTab } from './state';
+import { t } from './i18n';
 
 export function refreshToolbar() {
   const tab = getActiveTab();
@@ -12,8 +13,8 @@ export function refreshToolbar() {
   button('next-page').disabled = !pdf || viewer.currentPageNumber >= pdf.numPages;
   for (const id of ['zoom-in', 'zoom-out', 'rotate', 'find-toggle']) button(id).disabled = !pdf;
   button('print').disabled = !pdf || !tab.canPrint;
-  $('document-status').textContent = tab.rendered ? info.name : '読み込み中…';
-  $('document-details').textContent = pdf ? `${pdf.numPages} ページ · ${sizeLabel(info.size)}` : sizeLabel(info.size);
+  $('document-status').textContent = tab.rendered ? info.name : t('status.loading');
+  $('document-details').textContent = pdf ? `${pdf.numPages} ${t('status.pages')} · ${sizeLabel(info.size)}` : sizeLabel(info.size);
   const zoom = $<HTMLSelectElement>('zoom');
   const value = viewer.currentScaleValue;
   zoom.querySelector('[data-custom]')?.remove();

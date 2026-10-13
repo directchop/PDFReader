@@ -2,6 +2,7 @@ import * as bridge from './bridge';
 import { $, button, run } from './dom';
 import { icon } from './icons';
 import { enqueue } from './tabs';
+import { t } from './i18n';
 
 export async function refreshRecent() {
   const items = await bridge.recentDocuments();
@@ -9,7 +10,11 @@ export async function refreshRecent() {
   list.replaceChildren();
   button('clear-recent').disabled = items.length === 0;
   if (!items.length) {
-    list.innerHTML = '<div class="recent-empty">開いたPDFがここに表示されます。</div>';
+    list.textContent = '';
+    const empty = document.createElement('div');
+    empty.className = 'recent-empty';
+    empty.textContent = t('recent.empty');
+    list.append(empty);
     return;
   }
   for (const item of items.slice(0, 6)) {

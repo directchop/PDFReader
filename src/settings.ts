@@ -1,3 +1,5 @@
+import { applyTranslations, getLocaleChoice, setLocale } from './i18n';
+
 export type ThemeChoice = 'system' | 'light' | 'dark';
 
 const THEME_KEY = 'pdfreader.theme';
@@ -29,6 +31,12 @@ function setupSettingsMenu() {
   const toggle = document.getElementById('settings-toggle') as HTMLButtonElement;
   const menu = document.getElementById('settings-menu') as HTMLDivElement;
   const invert = document.getElementById('invert-pages') as HTMLInputElement;
+  const localeSelect = document.getElementById('locale-select') as HTMLSelectElement;
+  localeSelect.value = getLocaleChoice();
+  localeSelect.addEventListener('change', () => setLocale(localeSelect.value as 'auto' | 'ja' | 'en'));
+  window.addEventListener('localechange', () => {
+    localeSelect.value = getLocaleChoice();
+  });
   const setOpen = (open: boolean) => {
     menu.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
@@ -54,6 +62,7 @@ function setupSettingsMenu() {
 }
 
 applyTheme();
+applyTranslations();
 darkQuery.addEventListener('change', applyTheme);
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupSettingsMenu);
 else setupSettingsMenu();

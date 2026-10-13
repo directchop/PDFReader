@@ -1,3 +1,5 @@
+import { describeError } from './i18n';
+
 let toastTimer: ReturnType<typeof setTimeout>;
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -5,7 +7,7 @@ export const input = (id: string) => $<HTMLInputElement>(id);
 export const button = (id: string) => $<HTMLButtonElement>(id);
 
 export function message(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  return describeError(error instanceof Error ? error.message : String(error));
 }
 
 export function notify(text: string) {

@@ -1,5 +1,17 @@
 import { $, input } from './dom';
 import { getActiveTab } from './state';
+import { t } from './i18n';
+
+export function refreshFindCount() {
+  const count = getActiveTab()?.matchCount;
+  if (!count || count.state === 'idle') {
+    $('find-count').textContent = '';
+    return;
+  }
+  $('find-count').textContent = count.state === 'searching' ? t('find.searching')
+    : count.state === 'no-results' ? t('find.noResults')
+      : t('find.count', { current: count.current, total: count.total });
+}
 
 export function showFind() {
   if (!getActiveTab()?.pdf) return;
@@ -29,5 +41,8 @@ export function search(type = '', backwards = false) {
     findPrevious: backwards,
     matchDiacritics: false,
   });
-  if (!tab.query) $('find-count').textContent = '';
+  if (!tab.query) {
+    tab.matchCount = { state: 'idle', current: 0, total: 0 };
+    refreshFindCount();
+  }
 }

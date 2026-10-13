@@ -139,6 +139,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .eyebrow { color: var(--accent-text); font-size: 10.5px; letter-spacing: 2px; font-weight: 650; margin-bottom: 18px; }
 h1 { font-size: clamp(32px, 3.6vw, 44px); line-height: 1.35; letter-spacing: -1.2px; font-weight: 650; margin: 0 0 16px; }
 h1 span { display: block; color: var(--accent-text); }
+h1 .hero-title-prefix { display: inline; color: var(--text); }
 .welcome p { font-size: 14px; color: var(--text-2); line-height: 1.8; margin: 0; max-width: 360px; }
 .dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: 240px; padding: 32px; border: 1.5px dashed var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-sm); transition: border-color .15s, background .15s; }
 body.dragging .dropzone { border-color: var(--accent); background: var(--accent-soft); }

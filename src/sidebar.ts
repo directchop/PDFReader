@@ -1,6 +1,7 @@
 import { AnnotationMode } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { $, run } from './dom';
 import { getActiveTab, state, type ReaderTab } from './state';
+import { t } from './i18n';
 
 export async function renderSidebar() {
   state.thumbnailObserver?.disconnect();
@@ -14,7 +15,11 @@ export async function renderSidebar() {
   if (state.sidebarMode === 'outline') {
     const outline = tab.outline;
     if (!outline?.length) {
-      content.innerHTML = '<p class="sidebar-empty">このPDFには目次がありません。</p>';
+      content.textContent = '';
+      const empty = document.createElement('p');
+      empty.className = 'sidebar-empty';
+      empty.textContent = t('sidebar.outlineEmpty');
+      content.append(empty);
       return;
     }
     type Outline = NonNullable<ReaderTab['outline']>;
@@ -43,7 +48,7 @@ export async function renderSidebar() {
     navigation.className = 'thumb-pagination';
     const prev = document.createElement('button');
     prev.textContent = '‹';
-    prev.setAttribute('aria-label', '前の30ページ');
+    prev.setAttribute('aria-label', t('sidebar.previous30'));
     prev.disabled = first === 1;
     prev.onclick = () => {
       tab.viewer.currentPageNumber = Math.max(1, first - 30);
@@ -52,7 +57,7 @@ export async function renderSidebar() {
     label.textContent = `${first}–${last}`;
     const next = document.createElement('button');
     next.textContent = '›';
-    next.setAttribute('aria-label', '次の30ページ');
+    next.setAttribute('aria-label', t('sidebar.next30'));
     next.disabled = last === tab.pdf.numPages;
     next.onclick = () => {
       tab.viewer.currentPageNumber = last + 1;
@@ -84,7 +89,7 @@ export async function renderSidebar() {
     const el = document.createElement('button');
     el.className = `thumbnail${n === tab.viewer.currentPageNumber ? ' active' : ''}`;
     el.dataset.page = String(n);
-    el.setAttribute('aria-label', `${n}ページへ`);
+    el.setAttribute('aria-label', t('sidebar.goToPage', { page: n }));
     el.innerHTML = `<canvas width="112" height="158" aria-hidden="true"></canvas><span>${n}</span>`;
     el.onclick = () => {
       tab.viewer.currentPageNumber = n;
