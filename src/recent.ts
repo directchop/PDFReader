@@ -52,7 +52,7 @@ export async function refreshRecent() {
         notify(t('error.file_not_found'));
         return;
       }
-      run(async () => enqueue({ documents: [await bridge.reopenRecent(item.path)], errors: [] }));
+      run(async () => enqueue({ documents: [await bridge.reopenRecent(item.path)], errors: [], active: null }));
     };
     const remove = document.createElement('button');
     remove.className = 'icon-button recent-remove';

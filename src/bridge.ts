@@ -12,7 +12,7 @@ export interface ReadingPosition {
 export interface DocumentInfo { id: string; name: string; path: string; size: number; position: ReadingPosition | null }
 export interface RecentFile { name: string; path: string; position: ReadingPosition | null; exists: boolean }
 export interface OpenError { name: string; code: string }
-export interface OpenBatch { documents: DocumentInfo[]; errors: OpenError[] }
+export interface OpenBatch { documents: DocumentInfo[]; errors: OpenError[]; active: string | null }
 
 export const desktop = isTauri();
 const browserFiles = new Map<string, File>();
@@ -40,7 +40,7 @@ function readBrowserPosition(name: string, size: number): ReadingPosition | null
 }
 
 export async function acceptBrowserFiles(files: File[]): Promise<OpenBatch> {
-  const result: OpenBatch = { documents: [], errors: [] };
+  const result: OpenBatch = { documents: [], errors: [], active: null };
   for (const file of files) {
     if (browserFiles.size >= 12) {
       result.errors.push({ name: file.name, code: 'too_many_open' });
@@ -95,7 +95,15 @@ export const recentDocuments = (): Promise<RecentFile[]> => desktop ? invoke('re
 export const reopenRecent = (path: string): Promise<DocumentInfo> => invoke('reopen_recent', { path });
 export const clearRecent = (): Promise<void> => desktop ? invoke('clear_recent') : Promise.resolve();
 export const removeRecent = (path: string): Promise<void> => desktop ? invoke('remove_recent', { path }) : Promise.resolve();
-export const takePending = (): Promise<OpenBatch> => desktop ? invoke('take_pending') : Promise.resolve({ documents: [], errors: [] });
+export const takePending = (): Promise<OpenBatch> => desktop
+  ? invoke('take_pending')
+  : Promise.resolve({ documents: [], errors: [], active: null });
+export const saveSession = (ids: string[], active: string | null): Promise<void> => desktop
+  ? invoke('save_session', { ids, active })
+  : Promise.resolve();
+export const restoreSession = (): Promise<OpenBatch> => desktop
+  ? invoke('restore_session')
+  : Promise.resolve({ documents: [], errors: [], active: null });
 export async function onDocumentsReady(callback: () => void) {
   if (desktop) return listen('documents-ready', callback);
   return () => {};

@@ -60,6 +60,14 @@ struct OpenDocument {
 pub struct OpenBatch {
     pub documents: Vec<DocumentInfo>,
     pub errors: Vec<OpenError>,
+    pub active: Option<String>,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedSession {
+    paths: Vec<String>,
+    active: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -75,6 +83,7 @@ pub struct Library {
     pub recent: Vec<RecentFile>,
     pub pending: OpenBatch,
     history_file: Option<PathBuf>,
+    session_file: Option<PathBuf>,
 }
 
 impl Library {
@@ -85,6 +94,7 @@ impl Library {
             .unwrap_or_default();
         Self {
             recent: recent.into_iter().take(12).collect(),
+            session_file: path.parent().map(|dir| dir.join("session.json")),
             history_file: Some(path),
             ..Self::default()
         }
@@ -107,6 +117,37 @@ impl Library {
             return Err(error);
         }
         Ok(())
+    }
+
+    fn persist_session(&self, session: &SavedSession) -> Result<(), String> {
+        let Some(path) = &self.session_file else {
+            return Ok(());
+        };
+        let temp = path.with_extension("tmp");
+        let data = serde_json::to_vec_pretty(session).map_err(|e| e.to_string())?;
+        fs::write(&temp, data).map_err(|e| e.to_string())?;
+        fs::rename(temp, path).map_err(|e| e.to_string())
+    }
+
+    pub fn save_session(&self, ids: &[String], active: Option<&str>) -> Result<(), String> {
+        let paths = ids
+            .iter()
+            .filter_map(|id| self.documents.get(id).map(|doc| doc.info.path.clone()))
+            .collect();
+        let active = active.and_then(|id| self.documents.get(id).map(|doc| doc.info.path.clone()));
+        self.persist_session(&SavedSession { paths, active })
+    }
+
+    pub fn restore_session(&mut self) -> OpenBatch {
+        let saved = self
+            .session_file
+            .as_ref()
+            .and_then(|path| fs::read(path).ok())
+            .and_then(|data| serde_json::from_slice::<SavedSession>(&data).ok())
+            .unwrap_or_default();
+        let mut batch = self.open_many(saved.paths.iter().map(PathBuf::from));
+        batch.active = saved.active;
+        batch
     }
 
     pub fn open(&mut self, path: &Path) -> Result<DocumentInfo, String> {
@@ -423,5 +464,42 @@ mod tests {
         assert!(!recent[1].exists);
         let persisted = serde_json::to_value(&library.recent).unwrap();
         assert!(persisted[0].get("exists").is_none());
+    }
+
+    #[test]
+    fn session_roundtrip_restores_paths_active_and_missing_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("recent.json");
+        let first = pdf();
+        let second = pdf();
+        let mut library = Library::with_history(history.clone());
+        let first_info = library.open(first.path()).unwrap();
+        let second_info = library.open(second.path()).unwrap();
+        let missing = dir.path().join("missing.pdf");
+        library
+            .save_session(
+                &[first_info.id.clone(), second_info.id.clone()],
+                Some(&second_info.id),
+            )
+            .unwrap();
+
+        let mut restored = Library::with_history(history.clone());
+        let batch = restored.restore_session();
+        assert_eq!(batch.documents.len(), 2);
+        assert_eq!(batch.active.as_deref(), Some(second_info.path.as_str()));
+
+        restored
+            .persist_session(&SavedSession {
+                paths: vec![
+                    first_info.path,
+                    missing.to_string_lossy().into_owned(),
+                ],
+                active: Some(second_info.path.clone()),
+            })
+            .unwrap();
+        let mut restored = Library::with_history(history);
+        let batch = restored.restore_session();
+        assert_eq!(batch.errors.len(), 1);
+        assert_eq!(batch.errors[0].code, "file_not_found");
     }
 }

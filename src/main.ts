@@ -6,7 +6,7 @@ import * as bridge from './bridge';
 import './style.css';
 import { mountIcons } from './icons';
 import { $, button, input, run } from './dom';
-import { activate, closeTab, enqueue, flushPosition, refreshTabs } from './tabs';
+import { activate, closeTab, enqueue, flushPosition, flushSession, refreshTabs } from './tabs';
 import { renderSidebar } from './sidebar';
 import { hideFind, refreshFindCount, search, showFind } from './find';
 import { setScale, refreshToolbar, refreshViewMenu, zoomBy } from './toolbar';
@@ -111,6 +111,7 @@ button('clear-recent').onclick = () => run(async () => {
 });
 window.addEventListener('beforeunload', () => {
   for (const tab of tabs) void flushPosition(tab).catch(() => {});
+  void flushSession();
 });
 button('sidebar-toggle').onclick = () => {
   sidebar.hidden = !sidebar.hidden;
@@ -299,6 +300,12 @@ window.addEventListener('localechange', () => {
 });
 run(async () => {
   await bridge.onDocumentsReady(() => run(async () => enqueue(await bridge.takePending())));
+  if (bridge.desktop && localStorage.getItem('pdfreader.restoreSession') !== 'false') {
+    const session = await bridge.restoreSession();
+    enqueue(session, undefined, true);
+    await state.opening;
+  }
   enqueue(await bridge.takePending());
+  await state.opening;
   await refreshRecent();
 });

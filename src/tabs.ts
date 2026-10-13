@@ -12,6 +12,27 @@ import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
 import { refreshFindCount } from './find';
 
+let sessionTimer: ReturnType<typeof setTimeout> | undefined;
+let suppressSessionSave = false;
+
+function scheduleSessionSave() {
+  if (suppressSessionSave) return;
+  if (sessionTimer) clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => {
+    sessionTimer = undefined;
+    void flushSession();
+  }, 300);
+}
+
+export async function flushSession() {
+  if (sessionTimer) clearTimeout(sessionTimer);
+  sessionTimer = undefined;
+  try {
+    await bridge.saveSession(tabs.map(tab => tab.info.id), getActiveTab()?.info.id ?? null);
+  } catch {
+  }
+}
+
 function schedulePositionSave(tab: ReaderTab) {
   if (tab.positionTimer) clearTimeout(tab.positionTimer);
   tab.positionTimer = setTimeout(() => {
@@ -65,6 +86,7 @@ export function refreshTabs() {
 
 export function activate(tab?: ReaderTab) {
   setActiveTab(tab);
+  scheduleSessionSave();
   $('home').hidden = !!tab;
   $('reader').hidden = !tab;
   for (const candidate of tabs) candidate.pane.hidden = candidate !== tab;
@@ -87,11 +109,21 @@ export function activate(tab?: ReaderTab) {
   }
 }
 
-export function enqueue(batch: bridge.OpenBatch) {
+export function enqueue(batch: bridge.OpenBatch, activePath?: string | null, restoring = false) {
   state.opening = state.opening.then(async () => {
-    if (batch.errors.length) notify(batch.errors.map(error => `${error.name}: ${describeError(error.code)}`).join('\n'));
-    for (const info of batch.documents) await loadDocument(info);
-    await refreshRecent();
+    if (restoring) suppressSessionSave = true;
+    try {
+      if (batch.errors.length) notify(batch.errors.map(error => `${error.name}: ${describeError(error.code)}`).join('\n'));
+      for (const info of batch.documents) await loadDocument(info);
+      const active = tabs.find(tab => tab.info.path === (activePath ?? batch.active));
+      if (active) activate(active);
+      await refreshRecent();
+    } finally {
+      if (restoring) {
+        suppressSessionSave = false;
+        scheduleSessionSave();
+      }
+    }
   }).catch(error => notify(message(error)));
 }
 
@@ -264,6 +296,7 @@ export async function closeTab(tab: ReaderTab) {
   }
   const index = tabs.indexOf(tab);
   tabs.splice(index, 1);
+  scheduleSessionSave();
   if (getActiveTab() === tab) activate(tabs[Math.min(index, tabs.length - 1)]);
   else refreshTabs();
   tab.viewer.setDocument(null!);

@@ -31,6 +31,7 @@ function setupSettingsMenu() {
   const toggle = document.getElementById('settings-toggle') as HTMLButtonElement;
   const menu = document.getElementById('settings-menu') as HTMLDivElement;
   const invert = document.getElementById('invert-pages') as HTMLInputElement;
+  const restoreSession = document.getElementById('restore-session') as HTMLInputElement;
   const localeSelect = document.getElementById('locale-select') as HTMLSelectElement;
   localeSelect.value = getLocaleChoice();
   localeSelect.addEventListener('change', () => setLocale(localeSelect.value as 'auto' | 'ja' | 'en'));
@@ -58,6 +59,10 @@ function setupSettingsMenu() {
   invert.addEventListener('change', () => {
     localStorage.setItem(INVERT_KEY, String(invert.checked));
     applyTheme();
+  });
+  restoreSession.checked = localStorage.getItem('pdfreader.restoreSession') !== 'false';
+  restoreSession.addEventListener('change', () => {
+    localStorage.setItem('pdfreader.restoreSession', String(restoreSession.checked));
   });
 }
 

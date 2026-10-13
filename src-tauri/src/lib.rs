@@ -27,6 +27,26 @@ fn take_pending(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
 }
 
 #[tauri::command]
+fn save_session(
+    ids: Vec<String>,
+    active: Option<String>,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_session(&ids, active.as_deref())
+}
+
+#[tauri::command]
+fn restore_session(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
+    Ok(state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .restore_session())
+}
+
+#[tauri::command]
 fn recent_documents(state: State<'_, SharedLibrary>) -> Result<Vec<RecentFileView>, String> {
     Ok(state.lock().map_err(|e| e.to_string())?.recent_documents())
 }
@@ -164,6 +184,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_documents,
             take_pending,
+            save_session,
+            restore_session,
             recent_documents,
             reopen_recent,
             clear_recent,
