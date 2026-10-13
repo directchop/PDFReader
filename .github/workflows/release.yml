@@ -29,10 +29,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+      - name: Validate release tag version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: node scripts/release-metadata.mjs check-version "$RELEASE_TAG"
+      - name: Read release notes from tag
+        id: release-notes
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: node scripts/release-metadata.mjs release-notes "$RELEASE_TAG"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -154,7 +165,7 @@ jobs:
         with:
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           releaseName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
-          releaseBody: See the release assets to download and install PDFReader.
+          releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
           includeUpdaterJson: true
           args: --target ${{ matrix.target }} --config ${{ steps.release-config.outputs.path }}

@@ -2,8 +2,8 @@ import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import * as bridge from './bridge';
 import { $, button, input, message, notify } from './dom';
-import { t } from './i18n';
-import { shouldAutoCheck } from './update-policy';
+import { getLocale, t } from './i18n';
+import { formatUpdateDate, shouldAutoCheck } from './update-policy';
 import { saveAsCopy } from './annotations';
 import { flushPosition, flushSession } from './tabs';
 import { requestUnsavedChoice } from './unsaved';
@@ -43,8 +43,9 @@ function showUpdate(update: bridge.UpdateInfo) {
   $('update-title').textContent = t('update.title', { version: update.version });
   $('update-notes').textContent = (update.notes ?? '').slice(0, 2000);
   const date = $('update-date');
-  date.textContent = update.date ?? '';
-  date.hidden = !update.date;
+  const formattedDate = formatUpdateDate(update.date, getLocale());
+  date.textContent = formattedDate ?? '';
+  date.hidden = formattedDate === null;
   $('update-progress').hidden = true;
   $('update-progress-text').hidden = true;
   button('update-install').disabled = false;
@@ -158,6 +159,9 @@ export async function initializeUpdateSettings() {
     currentVersion = await getVersion();
     renderVersion();
     section.hidden = false;
+    $('update-dialog').addEventListener('cancel', event => {
+      if (installing) event.preventDefault();
+    });
   } catch {
     return;
   }

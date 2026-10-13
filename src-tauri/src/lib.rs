@@ -9,10 +9,9 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
+use time::format_description::well_known::Rfc3339;
 
 type SharedLibrary = Arc<Mutex<Library>>;
-const UPDATE_ENDPOINT: &str =
-    "https://github.com/directchop/PDFReader/releases/latest/download/latest.json";
 
 #[derive(Default)]
 struct UpdateState {
@@ -46,19 +45,10 @@ async fn check_update(
     app: tauri::AppHandle,
     state: State<'_, UpdateState>,
 ) -> Result<Option<UpdateInfo>, String> {
-    let Some(key) = updater_pubkey() else {
+    if updater_pubkey().is_none() {
         return Err("updater_unavailable".into());
-    };
-    let endpoint = UPDATE_ENDPOINT
-        .parse()
-        .map_err(|_| "update_failed".to_string())?;
-    let updater = app
-        .updater_builder()
-        .pubkey(key)
-        .endpoints(vec![endpoint])
-        .map_err(|_| "update_failed".to_string())?
-        .build()
-        .map_err(|_| "update_failed".to_string())?;
+    }
+    let updater = app.updater().map_err(|_| "update_failed".to_string())?;
     let update = updater
         .check()
         .await
@@ -73,7 +63,7 @@ async fn check_update(
     let info = UpdateInfo {
         version: update.version.clone(),
         notes: update.body.clone(),
-        date: update.date.map(|date| date.to_string()),
+        date: update.date.and_then(|date| date.format(&Rfc3339).ok()),
     };
     *state
         .pending

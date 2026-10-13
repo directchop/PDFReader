@@ -19,17 +19,19 @@ npx tauri signer generate -w ~/.tauri/pdfreader.key
 
 ## リリース手順
 
-1. アプリのバージョンとリリースノートを更新し、変更をマージします。
-2. `v0.2.0` のような `v*` タグを作成して push します。
+1. `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` のバージョンを同じ値に更新し、`Cargo.lock` にも反映して変更をマージします。workflow はタグから `v` を除いた値とこれらの3つのバージョンが一致しない場合、ビルド前に失敗します。
+2. 変更点を注釈付きタグのメッセージに記載し、`v0.2.0` のような `v*` タグを作成して push します。
 
    ```sh
-   git tag v0.2.0
+   git tag -a v0.2.0 -m "変更点…"
    git push origin v0.2.0
    ```
 
    必要なら Actions の Release workflow を手動実行し、`release_tag` にタグ名を指定できます。
-3. workflow が Windows x64 と macOS Universal をビルドし、同じタグの draft release に成果物をアップロードします。アップデート署名キーが設定済みの場合は署名アーティファクトと `latest.json` も生成します。
+3. workflow はタグメッセージをリリースノートとして使い、Windows x64 と macOS Universal をビルドして同じタグの draft release に成果物をアップロードします。アップデート署名キーが設定済みの場合は署名アーティファクトと `latest.json` も生成します。
 4. 成果物と署名を確認してから draft release を公開します。利用者の更新確認は公開済みの GitHub Release を参照します。
+
+アプリ内の更新ダイアログに表示されるリリースノートはビルド時にタグメッセージから生成されます。draft release の本文を後から編集しても、既に生成された `latest.json` のノートは変わりません。
 
 ## 未署名ビルドを開く
 
