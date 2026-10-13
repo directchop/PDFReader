@@ -1,39 +1,65 @@
 <!doctype html>
-<html lang="ja">
+<html lang="ja" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <title>PDFReader</title>
+    <script type="module" src="/src/settings.ts"></script>
   </head>
   <body>
     <div id="app">
       <header class="app-header">
-        <a class="brand" href="#" aria-label="ホーム"><span class="brand-mark">p<span>.</span></span><span>PDFReader</span><span class="version">PREVIEW</span></a>
-        <div class="header-actions"><span class="local-badge"><i></i> ローカルで動作</span><button id="open" class="primary" title="PDFを開く (Ctrl / ⌘ O)"><span data-icon="folder"></span> PDFを開く <kbd>⌘ / Ctrl O</kbd></button></div>
+        <a class="brand" href="#" aria-label="ホーム" title="ホーム"><span class="brand-mark">p<span>.</span></span><span class="brand-name">PDFReader</span></a>
+        <div id="tabs" class="tabs" role="tablist" aria-label="開いているPDF"></div>
+        <div class="header-actions">
+          <span class="local-badge"><i></i> ローカルで動作</span>
+          <button id="open" class="primary compact" title="PDFを開く (Ctrl / ⌘ O)"><span data-icon="folder"></span><span class="button-label">PDFを開く</span></button>
+          <div class="menu-anchor">
+            <button id="settings-toggle" class="icon-button" aria-label="設定" title="設定" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-menu"><span data-icon="settings"></span></button>
+            <div id="settings-menu" class="popover" role="dialog" aria-label="設定" hidden>
+              <div class="popover-section">
+                <div class="popover-label" id="theme-label">テーマ</div>
+                <div class="segmented" role="radiogroup" aria-labelledby="theme-label">
+                  <button type="button" role="radio" data-theme-choice="system" aria-checked="true"><span data-icon="monitor"></span><span>システム</span></button>
+                  <button type="button" role="radio" data-theme-choice="light" aria-checked="false"><span data-icon="sun"></span><span>ライト</span></button>
+                  <button type="button" role="radio" data-theme-choice="dark" aria-checked="false"><span data-icon="moon"></span><span>ダーク</span></button>
+                </div>
+              </div>
+              <label class="switch-row"><span><strong>ページを暗く表示</strong><small>PDFの白地を反転して目の負担を減らします</small></span><input id="invert-pages" type="checkbox" role="switch"></label>
+              <div class="popover-section" id="locale-section" hidden>
+                <label class="popover-label" for="locale-select">言語</label>
+                <select id="locale-select"><option value="auto">自動</option><option value="ja">日本語</option><option value="en">English</option></select>
+              </div>
+            </div>
+          </div>
+        </div>
       </header>
-      <div id="tabs" class="tabs" role="tablist" aria-label="開いているPDF"></div>
       <main>
         <section id="home" class="home">
-          <div class="welcome">
-            <div class="eyebrow">YOUR DOCUMENTS. YOUR SPACE.</div>
-            <h1>読むことに、<br><span>集中しよう。</span></h1>
-            <p>いつものPDFを、気持ちよく。<br>ファイルはこの端末の中で開かれます。</p>
-            <button id="welcome-open" class="primary large"><span data-icon="plus"></span> PDFを開く</button>
-            <div class="drop-hint">または、ここにファイルをドロップ</div>
+          <div class="hero">
+            <div class="welcome">
+              <div class="eyebrow">YOUR DOCUMENTS. YOUR SPACE.</div>
+              <h1>読むことに、<span>集中しよう。</span></h1>
+              <p>いつものPDFを、気持ちよく。ファイルはこの端末の中で開かれます。</p>
+            </div>
+            <div class="dropzone">
+              <div class="dropzone-icon" data-icon="file"></div>
+              <button id="welcome-open" class="primary large"><span data-icon="plus"></span> PDFを開く</button>
+              <div class="drop-hint">または、ここにファイルをドロップ</div>
+            </div>
           </div>
-          <div class="paper-scene" aria-hidden="true"><div class="back-paper"></div><div class="front-paper"><span class="paper-tag">PDF</span><div class="paper-title">A little less noise.<br>A little more focus.</div><div class="paper-rule"></div><div class="paper-line wide"></div><div class="paper-line"></div><div class="paper-line wide"></div><div class="paper-line short"></div><div class="paper-chart"><span></span><span></span><span></span><span></span><span></span></div><div class="paper-footer">MADE FOR READING <span>01</span></div></div><span class="scene-note">すっと開く。じっくり読む。</span></div>
           <section class="recent-section"><div class="section-heading"><h2>最近開いたファイル</h2><button id="clear-recent" class="text-button">履歴を消去</button></div><div id="recent-list" class="recent-list"></div></section>
           <footer class="home-footer"><span>閲覧に必要なものを、ひとつに。</span><span>検索 <kbd>Ctrl / ⌘ F</kbd><b>·</b> 印刷 <kbd>Ctrl / ⌘ P</kbd></span></footer>
         </section>
         <section id="reader" class="reader" hidden>
           <div class="toolbar" aria-label="閲覧ツール">
-            <div class="tool-group"><button id="sidebar-toggle" class="icon-button" title="サイドバーを切り替え" aria-label="サイドバーを切り替え" aria-pressed="true"><span data-icon="panel"></span></button><span class="divider"></span><button id="previous-page" class="icon-button" aria-label="前のページ" title="前のページ"><span data-icon="up"></span></button><input id="page-number" type="number" min="1" value="1" aria-label="ページ番号"><span id="page-total" class="page-total">/ 1</span><button id="next-page" class="icon-button" aria-label="次のページ" title="次のページ"><span data-icon="down"></span></button></div>
+            <div class="tool-group"><button id="sidebar-toggle" class="icon-button" title="サイドバーを切り替え" aria-label="サイドバーを切り替え" aria-pressed="true"><span data-icon="panel"></span></button><span class="divider"></span><button id="previous-page" class="icon-button" aria-label="前のページ" title="前のページ"><span data-icon="up"></span></button><div class="page-field"><input id="page-number" type="number" min="1" value="1" aria-label="ページ番号"><span id="page-total" class="page-total">/ 1</span></div><button id="next-page" class="icon-button" aria-label="次のページ" title="次のページ"><span data-icon="down"></span></button></div>
             <div class="tool-group zoom-tools"><button id="zoom-out" class="icon-button" aria-label="縮小" title="縮小"><span data-icon="minus"></span></button><select id="zoom" aria-label="表示倍率"><option value="auto">自動</option><option value="page-width">幅に合わせる</option><option value="page-fit">ページ全体</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option><option value="4">400%</option></select><button id="zoom-in" class="icon-button" aria-label="拡大" title="拡大"><span data-icon="plus"></span></button><span class="divider"></span><button id="rotate" class="icon-button" aria-label="右に回転" title="右に90°回転"><span data-icon="rotate"></span></button></div>
             <div class="tool-group"><button id="find-toggle" class="icon-button" aria-label="文書内を検索" title="文書内を検索 (Ctrl / ⌘ F)"><span data-icon="search"></span></button><button id="print" class="icon-button" aria-label="印刷" title="印刷 (Ctrl / ⌘ P)"><span data-icon="print"></span></button></div>
           </div>
-          <div id="findbar" class="findbar" hidden><span data-icon="search"></span><input id="find-input" type="search" placeholder="文書内を検索" aria-label="検索文字列"><span id="find-count" role="status"></span><label><input id="match-case" type="checkbox"> 大文字・小文字</label><button id="find-previous" class="icon-button" aria-label="前の検索結果"><span data-icon="up"></span></button><button id="find-next" class="icon-button" aria-label="次の検索結果"><span data-icon="down"></span></button><button id="find-close" class="icon-button" aria-label="検索を閉じる"><span data-icon="close"></span></button></div>
-          <div class="reader-body"><aside id="sidebar"><div class="sidebar-tabs"><button id="show-pages" class="selected">ページ</button><button id="show-outline">目次</button></div><div id="sidebar-content"></div></aside><div id="documents"></div></div>
+          <div id="findbar" class="findbar" hidden><div class="find-field"><span data-icon="search"></span><input id="find-input" type="search" placeholder="文書内を検索" aria-label="検索文字列"><span id="find-count" role="status"></span></div><button id="find-previous" class="icon-button" aria-label="前の検索結果"><span data-icon="up"></span></button><button id="find-next" class="icon-button" aria-label="次の検索結果"><span data-icon="down"></span></button><label class="check"><input id="match-case" type="checkbox"> 大文字・小文字</label><button id="find-close" class="icon-button" aria-label="検索を閉じる"><span data-icon="close"></span></button></div>
+          <div class="reader-body"><aside id="sidebar"><div class="sidebar-tabs segmented"><button id="show-pages" class="selected">ページ</button><button id="show-outline">目次</button></div><div id="sidebar-content"></div></aside><div id="documents"></div></div>
           <footer class="statusbar"><span id="document-status" role="status">読み込み中…</span><span id="document-details"></span><span class="status-local"><i></i> この端末のみ</span></footer>
         </section>
       </main>
