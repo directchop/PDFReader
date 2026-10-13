@@ -16,6 +16,10 @@ const paths: Record<string, string> = {
   moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/>',
   layout: '<path d="M12 7v14m0-14C7 3 3 5 3 5v14s4-2 9 2m0-14c5-4 9-2 9-2v14s-4-2-9 2"/>',
+  bookmark: '<path d="M6 4h12v17l-6-4-6 4z"/>',
+  edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2m3 0-1 15H6L5 6m4 4v7m6-7v7"/>',
+  present: '<path d="M3 4h18v13H3zM8 21l4-4 4 4"/><path d="m10 8 5 2.5-5 2.5z"/>',
   fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.2 1.8c-1 .9-1.8 1.3-1.8 2.7M12 17h.01"/>',
 };

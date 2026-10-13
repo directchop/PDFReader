@@ -1,6 +1,7 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import type { DocumentInfo } from './bridge';
+import type { Bookmark } from './bridge';
 
 export interface ReaderTab {
   info: DocumentInfo;
@@ -12,6 +13,7 @@ export interface ReaderTab {
   find: PDFFindController;
   task: PDFDocumentLoadingTask;
   pdf?: PDFDocumentProxy;
+  bookmarks: Bookmark[];
   outline?: Awaited<ReturnType<PDFDocumentProxy['getOutline']>>;
   disposed: boolean;
   query: string;
@@ -39,7 +41,7 @@ export function setActiveTab(tab?: ReaderTab) {
 }
 
 export const state = {
-  sidebarMode: 'pages' as 'pages' | 'outline',
+  sidebarMode: 'pages' as 'pages' | 'outline' | 'bookmarks' | 'search',
   thumbnailObserver: undefined as IntersectionObserver | undefined,
   thumbnailGroup: -1,
   sidebarVersion: 0,

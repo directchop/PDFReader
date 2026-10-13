@@ -190,3 +190,71 @@ test('spread modes, shortcut help, and pointer-centered wheel zoom work', async 
   await page.keyboard.press('Escape');
   await expect(page.locator('#shortcuts-dialog')).toBeHidden();
 });
+
+test('bookmarks persist in browser preview and can be renamed and deleted', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#page-number').fill('2');
+  await page.locator('#page-number').press('Enter');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.locator('#bookmark-toggle').click();
+  await expect(page.locator('#bookmark-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#show-bookmarks').click();
+  await expect(page.locator('.bookmark-row')).toHaveCount(1);
+  await page.locator('.bookmark-row [aria-label="しおりの名前を変更"]').click();
+  await page.locator('.bookmark-row input').fill('調査メモ');
+  await page.locator('.bookmark-row input').press('Enter');
+  await expect(page.locator('.bookmark-link')).toHaveText('調査メモ');
+
+  await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
+  await open(page);
+  await ready(page);
+  await page.locator('#show-bookmarks').click();
+  await expect(page.locator('.bookmark-link')).toHaveText('調査メモ');
+  await page.locator('.bookmark-row [aria-label="しおりを削除"]').click();
+  await expect(page.locator('.sidebar-empty')).toHaveText('しおりはありません。');
+});
+
+test('search results show safe contextual snippets and navigate by page', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#find-toggle').click();
+  await page.locator('#find-input').fill('日本語');
+  await page.locator('#find-input').press('Enter');
+  const rows = page.locator('.search-result');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText('日本語');
+  for (const mark of await rows.locator('mark').all()) {
+    await expect(mark).toHaveText('日本語');
+  }
+  await page.locator('#find-input').fill('local');
+  await page.locator('#find-input').press('Enter');
+  await expect.poll(async () => new Set(await rows.evaluateAll(items => items.map(item => (item as HTMLElement).dataset.page))).size).toBe(3);
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText('local');
+  await expect(rows.locator('mark')).toHaveCount(0);
+  await page.locator('.search-result[data-page="3"]').click();
+  await expect(page.locator('#page-number')).toHaveValue('3');
+  await expect(page.locator('.search-result.active')).toHaveAttribute('data-page', '3');
+});
+
+test('presentation mode enters with F5 and restores the previous zoom on exit', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#zoom').selectOption('1.25');
+  const before = await page.locator('#zoom').inputValue();
+  await page.keyboard.press('F5');
+  await expect(page.locator('#app')).toHaveClass(/presenting/);
+  await expect(page.locator('.toolbar')).toBeHidden();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#app')).not.toHaveClass(/presenting/);
+  await expect(page.locator('#zoom')).toHaveValue(before);
+});

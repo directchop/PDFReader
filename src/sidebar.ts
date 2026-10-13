@@ -2,16 +2,83 @@ import { AnnotationMode } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { $, run } from './dom';
 import { getActiveTab, state, type ReaderTab } from './state';
 import { t } from './i18n';
+import { icon } from './icons';
+import * as bridge from './bridge';
+import { renderSearchResults } from './search-results';
 
 export async function renderSidebar() {
   state.thumbnailObserver?.disconnect();
   const version = ++state.sidebarVersion;
   const content = $('sidebar-content');
   content.replaceChildren();
-  $('show-pages').classList.toggle('selected', state.sidebarMode === 'pages');
-  $('show-outline').classList.toggle('selected', state.sidebarMode === 'outline');
+  for (const [id, mode] of [['show-pages', 'pages'], ['show-outline', 'outline'], ['show-bookmarks', 'bookmarks'], ['show-search-results', 'search']]) {
+    $(id).classList.toggle('selected', state.sidebarMode === mode);
+  }
   const tab = getActiveTab();
   if (!tab?.pdf || $('sidebar').hidden) return;
+  if (state.sidebarMode === 'bookmarks') {
+    if (!tab.bookmarks.length) {
+      const empty = document.createElement('p');
+      empty.className = 'sidebar-empty';
+      empty.textContent = t('sidebar.bookmarksEmpty');
+      content.append(empty);
+      return;
+    }
+    for (const bookmark of [...tab.bookmarks].sort((a, b) => a.page - b.page)) {
+      const row = document.createElement('div');
+      row.className = 'bookmark-row';
+      const goto = document.createElement('button');
+      goto.className = 'bookmark-link';
+      goto.textContent = bookmark.label;
+      goto.title = t('sidebar.bookmarkPage', { page: bookmark.page });
+      goto.onclick = () => { tab.viewer.currentPageNumber = bookmark.page; };
+      const edit = document.createElement('button');
+      edit.className = 'icon-button';
+      edit.innerHTML = icon('edit');
+      edit.setAttribute('aria-label', t('sidebar.renameBookmark'));
+      const remove = document.createElement('button');
+      remove.className = 'icon-button';
+      remove.innerHTML = icon('trash');
+      remove.setAttribute('aria-label', t('sidebar.deleteBookmark'));
+      const rename = () => {
+        const input = document.createElement('input');
+        input.value = bookmark.label;
+        input.setAttribute('aria-label', t('sidebar.renameBookmark'));
+        goto.replaceWith(input);
+        let done = false;
+        const finish = async (save: boolean) => {
+          if (done) return;
+          done = true;
+          if (save && input.value.trim()) {
+            bookmark.label = input.value.trim();
+            await bridge.saveBookmarks(tab.info, tab.bookmarks);
+          }
+          await renderSidebar();
+        };
+        input.onkeydown = event => {
+          if (event.key === 'Enter') void finish(true);
+          if (event.key === 'Escape') void finish(false);
+        };
+        input.onblur = () => void finish(true);
+        input.focus();
+        input.select();
+      };
+      goto.ondblclick = rename;
+      edit.onclick = rename;
+      remove.onclick = () => run(async () => {
+        tab.bookmarks = tab.bookmarks.filter(item => item !== bookmark);
+        await bridge.saveBookmarks(tab.info, tab.bookmarks);
+        await renderSidebar();
+      });
+      row.append(goto, edit, remove);
+      content.append(row);
+    }
+    return;
+  }
+  if (state.sidebarMode === 'search') {
+    await renderSearchResults(tab);
+    return;
+  }
   if (state.sidebarMode === 'outline') {
     const outline = tab.outline;
     if (!outline?.length) {

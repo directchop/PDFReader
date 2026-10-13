@@ -5,8 +5,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as bridge from './bridge';
 import './style.css';
 import { mountIcons } from './icons';
-import { $, button, input, run } from './dom';
-import { activate, closeTab, enqueue, flushPosition, flushSession, refreshTabs } from './tabs';
+import { $, button, input, notify, run } from './dom';
+import { activate, closeTab, enqueue, flushPosition, flushSession, refreshTabs, reloadDocument } from './tabs';
 import { renderSidebar } from './sidebar';
 import { hideFind, refreshFindCount, search, showFind } from './find';
 import { setScale, refreshToolbar, refreshViewMenu, zoomBy } from './toolbar';
@@ -15,17 +15,21 @@ import { refreshRecent } from './recent';
 import { registerShortcuts, showShortcuts } from './shortcuts';
 import { getActiveTab, state, tabs } from './state';
 import { t } from './i18n';
+import { toggleCurrentBookmark } from './bookmarks';
+import { setFullscreen, syncFullscreen } from './fullscreen';
+import { exitPresentation, initializePresentation } from './presentation';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 mountIcons();
 initializePrint();
+initializePresentation();
 const passwordDialog = $<HTMLDialogElement>('password-dialog');
 const sidebarPreferencesKey = 'pdfreader.sidebar';
 const sidebar = $('sidebar');
 try {
   const saved = JSON.parse(localStorage.getItem(sidebarPreferencesKey) ?? 'null') as { open?: unknown; mode?: unknown } | null;
   if (saved && typeof saved.open === 'boolean') sidebar.hidden = !saved.open;
-  if (saved?.mode === 'pages' || saved?.mode === 'outline') state.sidebarMode = saved.mode;
+  if (saved?.mode === 'pages' || saved?.mode === 'outline' || saved?.mode === 'bookmarks' || saved?.mode === 'search') state.sidebarMode = saved.mode;
 } catch {
 }
 button('sidebar-toggle').setAttribute('aria-pressed', String(!sidebar.hidden));
@@ -42,21 +46,12 @@ function saveSidebarPreferences() {
   }
 }
 
-function syncFullscreen(fullscreen: boolean) {
-  $('app').classList.toggle('fullscreen', fullscreen);
-  button('fullscreen').setAttribute('aria-pressed', String(fullscreen));
-  const key = fullscreen ? 'toolbar.exitFullscreen' : 'toolbar.fullscreen';
-  button('fullscreen').setAttribute('aria-label', t(key));
-  button('fullscreen').title = t(key);
-}
-
-async function setFullscreen(fullscreen: boolean) {
-  await bridge.setFullscreen(fullscreen);
-  syncFullscreen(fullscreen);
-}
-
 document.addEventListener('fullscreenchange', () => {
-  if (!bridge.desktop) syncFullscreen(document.fullscreenElement !== null);
+  if (!bridge.desktop) {
+    const fullscreen = document.fullscreenElement !== null;
+    syncFullscreen(fullscreen);
+    if (!fullscreen && $('app').classList.contains('presenting')) void exitPresentation(false);
+  }
 });
 button('fullscreen').onclick = () => run(() => setFullscreen(!$('app').classList.contains('fullscreen')));
 button('shortcuts-toggle').onclick = showShortcuts;
@@ -130,6 +125,21 @@ button('show-outline').onclick = () => {
   saveSidebarPreferences();
   void renderSidebar();
 };
+button('show-bookmarks').onclick = () => {
+  state.sidebarMode = 'bookmarks';
+  saveSidebarPreferences();
+  void renderSidebar();
+};
+button('show-search-results').onclick = () => {
+  state.sidebarMode = 'search';
+  saveSidebarPreferences();
+  void renderSidebar();
+};
+button('bookmark-toggle').onclick = () => run(async () => {
+  await toggleCurrentBookmark();
+  refreshToolbar();
+  await renderSidebar();
+});
 button('previous-page').onclick = () => {
   const tab = getActiveTab();
   if (tab?.pdf) tab.viewer.previousPage();
@@ -155,12 +165,20 @@ button('rotate').onclick = () => {
 };
 button('find-toggle').onclick = showFind;
 button('find-close').onclick = hideFind;
-input('find-input').oninput = () => search();
+input('find-input').oninput = () => {
+  search();
+  if (state.sidebarMode === 'search') void renderSidebar();
+};
 input('match-case').onchange = () => search('casesensitivitychange');
 input('find-input').onkeydown = event => {
   if (event.key === 'Enter') {
     event.preventDefault();
     search('again', event.shiftKey);
+    if (getActiveTab()?.query.trim()) {
+      state.sidebarMode = 'search';
+      saveSidebarPreferences();
+      void renderSidebar();
+    }
   } else if (event.key === 'Escape') {
     hideFind();
   }
@@ -279,7 +297,9 @@ if (!bridge.desktop) {
 } else {
   const currentWindow = getCurrentWindow();
   void currentWindow.onResized(async () => {
-    syncFullscreen(await currentWindow.isFullscreen());
+    const fullscreen = await currentWindow.isFullscreen();
+    syncFullscreen(fullscreen);
+    if (!fullscreen && $('app').classList.contains('presenting')) void exitPresentation(false);
   });
   void getCurrentWebview().onDragDropEvent(event => {
     if (event.payload.type === 'enter' || event.payload.type === 'over') {
@@ -300,6 +320,13 @@ window.addEventListener('localechange', () => {
 });
 run(async () => {
   await bridge.onDocumentsReady(() => run(async () => enqueue(await bridge.takePending())));
+  void bridge.onDocumentChanged(info => {
+    if (localStorage.getItem('pdfreader.autoReload') === 'false') return;
+    run(async () => {
+      const tab = await reloadDocument(info);
+      if (tab) notify(t('reload.done', { name: info.name }));
+    });
+  });
   if (bridge.desktop && localStorage.getItem('pdfreader.restoreSession') !== 'false') {
     const session = await bridge.restoreSession();
     enqueue(session, undefined, true);

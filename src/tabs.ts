@@ -10,7 +10,7 @@ import { refreshToolbar } from './toolbar';
 import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
-import { refreshFindCount } from './find';
+import { refreshFindCount, search } from './find';
 
 let sessionTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressSessionSave = false;
@@ -34,9 +34,11 @@ export async function flushSession() {
 }
 
 function schedulePositionSave(tab: ReaderTab) {
+  if (document.getElementById('app')?.classList.contains('presenting')) return;
   if (tab.positionTimer) clearTimeout(tab.positionTimer);
   tab.positionTimer = setTimeout(() => {
     tab.positionTimer = undefined;
+    if (document.getElementById('app')?.classList.contains('presenting')) return;
     void flushPosition(tab).catch(error => notify(message(error)));
   }, 800);
 }
@@ -181,6 +183,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     links,
     find,
     task,
+    bookmarks: [],
     disposed: false,
     query: '',
     matchCase: false,
@@ -200,7 +203,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     input('password').focus();
   };
   bus.on('pagesinit', () => {
-    const position = info.position;
+    const position = tab.info.position;
     viewer.currentScaleValue = position?.scale ?? 'auto';
     if (position) {
       viewer.pagesRotation = position.rotation;
@@ -249,7 +252,10 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   });
   bus.on('updatefindmatchescount', (event: { matchesCount: { current: number; total: number } }) => {
     tab.matchCount = { state: 'matches', ...event.matchesCount };
-    if (getActiveTab() === tab) refreshFindCount();
+    if (getActiveTab() === tab) {
+      refreshFindCount();
+      if (state.sidebarMode === 'search') void renderSidebar();
+    }
   });
   bus.on('updatefindcontrolstate', (event: { state: number; matchesCount: { current: number; total: number } }) => {
     tab.matchCount = {
@@ -260,6 +266,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   });
   try {
     const pdf = await task.promise;
+    tab.bookmarks = await bridge.bookmarks(info).catch(() => []);
     if (tab.disposed) return;
     tab.pdf = pdf;
     const permissions = await pdf.getPermissions();
@@ -279,6 +286,50 @@ export async function loadDocument(info: bridge.DocumentInfo) {
       await closeTab(tab);
     }
   }
+}
+
+export async function reloadDocument(info: bridge.DocumentInfo) {
+  const tab = tabs.find(item => item.info.id === info.id);
+  if (!tab) return;
+  const position: ReadingPosition = {
+    page: tab.viewer.currentPageNumber,
+    pages: tab.pdf?.numPages ?? 1,
+    scale: tab.viewer.currentScaleValue || 'auto',
+    rotation: tab.viewer.pagesRotation,
+    spread: tab.viewer.spreadMode,
+    scroll: tab.viewer.scrollMode,
+  };
+  tab.info = { ...info, position };
+  tab.rendered = false;
+  await tab.task.destroy();
+  const transport = new LocalPdfTransport(tab.info, error => {
+    notify(message(error));
+    run(() => closeTab(tab));
+  });
+  const task = getDocument({
+    range: transport,
+    rangeChunkSize: 65536,
+    disableStream: true,
+    disableAutoFetch: true,
+    cMapUrl: '/pdfjs/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: '/pdfjs/standard_fonts/',
+    wasmUrl: '/pdfjs/wasm/',
+    enableXfa: false,
+  });
+  tab.task = task;
+  const pdf = await task.promise;
+  tab.pdf = pdf;
+  tab.links.setDocument(pdf);
+  tab.viewer.setDocument(pdf);
+  tab.outline = await pdf.getOutline();
+  tab.bookmarks = await bridge.bookmarks(tab.info).catch(() => []);
+  if (getActiveTab() === tab) {
+    refreshToolbar();
+    await renderSidebar();
+    if (tab.query.trim()) search('find');
+  }
+  return tab;
 }
 
 export async function closeTab(tab: ReaderTab) {
