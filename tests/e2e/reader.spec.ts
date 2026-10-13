@@ -156,3 +156,37 @@ test('persists sidebar visibility and mode', async ({ page }) => {
   await expect(page.locator('#sidebar')).toBeVisible();
   await expect(page.locator('#show-pages')).toHaveClass(/selected/);
 });
+
+test('spread modes, shortcut help, and pointer-centered wheel zoom work', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#zoom').selectOption('1');
+  const initialZoom = Number((await page.locator('#zoom option:checked').textContent())?.replace('%', ''));
+  await page.locator('.viewer-container').evaluate(element => {
+    element.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -100,
+      clientX: 240,
+      clientY: 180,
+    }));
+  });
+  await expect.poll(async () => Number((await page.locator('#zoom option:checked').textContent())?.replace('%', '')))
+    .toBeGreaterThan(initialZoom);
+
+  await page.locator('#view-menu-toggle').click();
+  await page.locator('#spread-odd').click();
+  await expect(page.locator('#spread-odd')).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => page.locator('.document-pane:not([hidden]) .pdfViewer').evaluate(viewer =>
+    viewer.classList.contains('spread') || !!viewer.querySelector('.spread'),
+  )).toBe(true);
+  await page.keyboard.press('Escape');
+
+  await page.keyboard.press('Shift+/');
+  await expect(page.locator('#shortcuts-dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#shortcuts-dialog')).toBeHidden();
+});

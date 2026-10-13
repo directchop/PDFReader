@@ -50,13 +50,38 @@
             </div>
           </div>
           <section class="recent-section"><div class="section-heading"><h2 data-i18n="recent.heading">最近開いたファイル</h2><button id="clear-recent" class="text-button" data-i18n="recent.clear">履歴を消去</button></div><div id="recent-list" class="recent-list"></div></section>
-          <footer class="home-footer"><span data-i18n="home.tagline">閲覧に必要なものを、ひとつに。</span><span><span data-i18n="home.search">検索</span> <kbd>Ctrl / ⌘ F</kbd><b>·</b> <span data-i18n="home.print">印刷</span> <kbd>Ctrl / ⌘ P</kbd></span></footer>
+          <footer class="home-footer"><span data-i18n="home.tagline">閲覧に必要なものを、ひとつに。</span><a href="#" id="shortcuts-link" data-i18n-aria-label="shortcuts.open"><span data-i18n="home.search">検索</span> <kbd><span data-shortcut-modifier></span>F</kbd><b>·</b> <span data-i18n="home.print">印刷</span> <kbd><span data-shortcut-modifier></span>P</kbd></a></footer>
         </section>
         <section id="reader" class="reader" hidden>
           <div class="toolbar" aria-label="閲覧ツール" data-i18n-aria-label="reader.tools">
             <div class="tool-group"><button id="sidebar-toggle" class="icon-button" title="サイドバーを切り替え" aria-label="サイドバーを切り替え" data-i18n-title="toolbar.sidebar" data-i18n-aria-label="toolbar.sidebar" aria-pressed="true"><span data-icon="panel"></span></button><span class="divider"></span><button id="previous-page" class="icon-button" aria-label="前のページ" title="前のページ" data-i18n-aria-label="toolbar.previousPage" data-i18n-title="toolbar.previousPage"><span data-icon="up"></span></button><div class="page-field"><input id="page-number" type="number" min="1" value="1" aria-label="ページ番号" data-i18n-aria-label="toolbar.pageNumber"><span id="page-total" class="page-total">/ 1</span></div><button id="next-page" class="icon-button" aria-label="次のページ" title="次のページ" data-i18n-aria-label="toolbar.nextPage" data-i18n-title="toolbar.nextPage"><span data-icon="down"></span></button></div>
             <div class="tool-group zoom-tools"><button id="zoom-out" class="icon-button" aria-label="縮小" title="縮小" data-i18n-aria-label="toolbar.zoomOut" data-i18n-title="toolbar.zoomOut"><span data-icon="minus"></span></button><select id="zoom" aria-label="表示倍率" data-i18n-aria-label="toolbar.zoom"><option value="auto" data-i18n="toolbar.zoomAuto">自動</option><option value="page-width" data-i18n="toolbar.zoomWidth">幅に合わせる</option><option value="page-fit" data-i18n="toolbar.zoomFit">ページ全体</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option><option value="4">400%</option></select><button id="zoom-in" class="icon-button" aria-label="拡大" title="拡大" data-i18n-aria-label="toolbar.zoomIn" data-i18n-title="toolbar.zoomIn"><span data-icon="plus"></span></button><span class="divider"></span><button id="rotate" class="icon-button" aria-label="右に回転" title="右に90°回転" data-i18n-aria-label="toolbar.rotate" data-i18n-title="toolbar.rotateTitle"><span data-icon="rotate"></span></button></div>
-            <div class="tool-group"><button id="find-toggle" class="icon-button" aria-label="文書内を検索" title="文書内を検索 (Ctrl / ⌘ F)" data-i18n-aria-label="toolbar.find" data-i18n-title="toolbar.findTitle"><span data-icon="search"></span></button><button id="print" class="icon-button" aria-label="印刷" title="印刷 (Ctrl / ⌘ P)" data-i18n-aria-label="toolbar.print" data-i18n-title="toolbar.printTitle"><span data-icon="print"></span></button></div>
+            <div class="tool-group toolbar-actions">
+              <div class="view-menu-anchor">
+                <button id="view-menu-toggle" class="icon-button" aria-label="表示設定" title="表示設定" data-i18n-aria-label="toolbar.view" data-i18n-title="toolbar.view" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-menu"><span data-icon="layout"></span></button>
+                <div id="view-menu" class="popover view-menu" role="dialog" aria-label="表示設定" data-i18n-aria-label="view.menu" hidden>
+                  <div class="popover-section">
+                    <div class="popover-label" id="view-spread-label" data-i18n="view.spread">ページレイアウト</div>
+                    <div class="segmented view-options" role="radiogroup" aria-labelledby="view-spread-label">
+                      <button type="button" id="spread-none" role="radio" aria-checked="true" data-spread="0" data-i18n="view.single">単ページ</button>
+                      <button type="button" id="spread-odd" role="radio" aria-checked="false" data-spread="1" data-i18n="view.spreadOdd">見開き（奇数始まり）</button>
+                      <button type="button" id="spread-even" role="radio" aria-checked="false" data-spread="2" data-i18n="view.spreadEven">見開き（偶数始まり）</button>
+                    </div>
+                  </div>
+                  <div class="popover-section">
+                    <div class="popover-label" id="view-scroll-label" data-i18n="view.scroll">スクロール</div>
+                    <div class="segmented view-options" role="radiogroup" aria-labelledby="view-scroll-label">
+                      <button type="button" id="scroll-vertical" role="radio" aria-checked="true" data-scroll="0" data-i18n="view.continuous">連続スクロール</button>
+                      <button type="button" id="scroll-page" role="radio" aria-checked="false" data-scroll="3" data-i18n="view.page">1ページずつ</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button id="fullscreen" class="icon-button" aria-label="全画面表示" title="全画面表示" data-i18n-aria-label="toolbar.fullscreen" data-i18n-title="toolbar.fullscreen" aria-pressed="false"><span data-icon="fullscreen"></span></button>
+              <button id="shortcuts-toggle" class="icon-button" aria-label="ショートカット一覧" title="ショートカット一覧" data-i18n-aria-label="toolbar.shortcuts" data-i18n-title="toolbar.shortcuts" aria-haspopup="dialog" aria-controls="shortcuts-dialog"><span data-icon="help"></span></button>
+              <button id="find-toggle" class="icon-button" aria-label="文書内を検索" title="文書内を検索 (Ctrl / ⌘ F)" data-i18n-aria-label="toolbar.find" data-i18n-title="toolbar.findTitle"><span data-icon="search"></span></button>
+              <button id="print" class="icon-button" aria-label="印刷" title="印刷 (Ctrl / ⌘ P)" data-i18n-aria-label="toolbar.print" data-i18n-title="toolbar.printTitle"><span data-icon="print"></span></button>
+            </div>
           </div>
           <div id="findbar" class="findbar" hidden><div class="find-field"><span data-icon="search"></span><input id="find-input" type="search" placeholder="文書内を検索" aria-label="検索文字列" data-i18n-placeholder="find.placeholder" data-i18n-aria-label="find.query"><span id="find-count" role="status"></span></div><button id="find-previous" class="icon-button" aria-label="前の検索結果" data-i18n-aria-label="find.previous"><span data-icon="up"></span></button><button id="find-next" class="icon-button" aria-label="次の検索結果" data-i18n-aria-label="find.next"><span data-icon="down"></span></button><label class="check"><input id="match-case" type="checkbox"><span data-i18n="find.matchCase">大文字・小文字</span></label><button id="find-close" class="icon-button" aria-label="検索を閉じる" data-i18n-aria-label="find.close"><span data-icon="close"></span></button></div>
           <div class="reader-body"><aside id="sidebar"><div class="sidebar-tabs segmented"><button id="show-pages" class="selected" data-i18n="sidebar.pages">ページ</button><button id="show-outline" data-i18n="sidebar.outline">目次</button></div><div id="sidebar-content"></div></aside><div id="documents"></div></div>
@@ -66,6 +91,30 @@
     </div>
     <div id="toast" class="toast" role="alert" hidden></div>
     <dialog id="password-dialog"><form method="dialog" id="password-form"><div class="dialog-icon" data-icon="lock"></div><h2 data-i18n="password.title">パスワードが必要です</h2><p id="password-message" data-i18n="password.prompt">このPDFを開くためのパスワードを入力してください。</p><input id="password" type="password" autocomplete="off" aria-label="PDFのパスワード" data-i18n-aria-label="password.input" required><div class="dialog-actions"><button type="button" id="password-cancel" data-i18n="action.cancel">キャンセル</button><button type="submit" class="primary" data-i18n="action.open">開く</button></div></form></dialog>
+    <dialog id="shortcuts-dialog" class="shortcuts-dialog" aria-labelledby="shortcuts-title">
+      <div class="shortcuts-header"><h2 id="shortcuts-title" data-i18n="shortcuts.title">キーボードショートカット</h2><button id="shortcuts-close" class="icon-button" aria-label="ショートカットを閉じる" data-i18n-aria-label="shortcuts.close"><span data-icon="close"></span></button></div>
+      <div class="shortcuts-list">
+        <div class="shortcut-row"><span data-i18n="shortcuts.openFile">PDFを開く</span><kbd data-shortcut-modifier data-shortcut-key="O">Ctrl+O</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.find">文書内を検索</span><kbd data-shortcut-modifier data-shortcut-key="F">Ctrl+F</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.print">印刷</span><kbd data-shortcut-modifier data-shortcut-key="P">Ctrl+P</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.closeTab">タブを閉じる</span><kbd data-shortcut-modifier data-shortcut-key="W">Ctrl+W</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.previousPage">前のページ</span><kbd>←</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.nextPage">次のページ</span><kbd>→</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.firstPage">最初のページ</span><kbd>Home</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.lastPage">最後のページ</span><kbd>End</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.goToPage">ページ番号を入力</span><kbd data-shortcut-modifier data-shortcut-key="G">Ctrl+G</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.sidebar">サイドバーを切り替え</span><kbd data-shortcut-modifier data-shortcut-key="B">Ctrl+B</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.rotate">ページを右に回転</span><kbd data-shortcut-modifier data-shortcut-key="R">Ctrl+R</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.findNext">次の検索結果</span><kbd>F3</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.findPrevious">前の検索結果</span><kbd>Shift+F3</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.zoomIn">拡大</span><kbd data-shortcut-modifier data-shortcut-key="+">Ctrl++</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.zoomOut">縮小</span><kbd data-shortcut-modifier data-shortcut-key="-">Ctrl+-</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.fitPage">ページ全体に合わせる</span><kbd data-shortcut-modifier data-shortcut-key="0">Ctrl+0</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.cycleTabs">タブを切り替え</span><kbd>Ctrl+Tab / Ctrl+Shift+Tab</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.fullscreen">全画面表示を切り替え</span><kbd>F11</kbd><span class="mac-shortcut" hidden><kbd>Ctrl+⌘+F</kbd></span></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.help">ショートカット一覧を開く</span><kbd>? / F1</kbd></div>
+      </div>
+    </dialog>
     <dialog id="print-dialog"><form id="print-form"><div class="dialog-icon" data-icon="print"></div><h2 data-i18n="print.title">PDFを印刷</h2><p data-i18n="print.intro">印刷するページを準備してから、OSの印刷画面を開きます。</p><label class="field-label" for="print-range" data-i18n="print.rangeLabel">ページ範囲</label><input id="print-range" placeholder="すべて（例: 1-3, 5）" data-i18n-placeholder="print.rangePlaceholder"><p class="field-note" data-i18n="print.rangeNote">1回につき100ページまで。用紙サイズ・倍率は印刷画面で確認できます。</p><p id="print-progress" role="status"></p><div class="dialog-actions"><button type="button" id="print-cancel" data-i18n="action.cancel">キャンセル</button><button type="submit" id="print-submit" class="primary" data-i18n="print.submit">印刷へ進む</button></div></form></dialog>
     <div id="print-output" aria-hidden="true"></div>
     <script type="module" src="/src/main.ts"></script>

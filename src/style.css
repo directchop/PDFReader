@@ -116,6 +116,10 @@ kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fon
 .popover-section { display: grid; gap: 8px; }
 .popover-label { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: .3px; }
 .popover select { width: 100%; padding: 7px 9px; }
+.view-menu-anchor { position: relative; }
+.view-menu { width: 300px; }
+.view-options { flex-direction: column; }
+.view-options button { flex: none; width: 100%; text-align: left; }
 .segmented { display: flex; gap: 2px; padding: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; }
 .segmented button { flex: 1; border: 0; background: transparent; padding: 6px 8px; font-size: 12px; color: var(--text-2); border-radius: 6px; }
 .segmented button svg { width: 15px; height: 15px; }
@@ -166,11 +170,14 @@ h2 { font-weight: 650; font-size: 14px; margin: 0; }
 .recent-card:hover .recent-remove, .recent-card:focus-within .recent-remove { opacity: 1; }
 .home-footer { display: flex; justify-content: space-between; color: var(--text-3); font-size: 11.5px; padding: 36px 0 28px; }
 .home-footer b { padding: 0 12px; font-weight: normal; }
+.home-footer a { color: inherit; text-decoration: none; }
+.home-footer a:hover { color: var(--accent-text); }
 
 /* Reader */
 .reader { display: flex; height: 100%; flex-direction: column; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0 10px; gap: 12px; background: var(--surface); border-bottom: 1px solid var(--border); height: 46px; flex-shrink: 0; }
 .tool-group { display: flex; align-items: center; gap: 2px; }
+.toolbar-actions { position: relative; }
 .divider { height: 20px; width: 1px; background: var(--border); margin: 0 7px; }
 .page-field { display: flex; align-items: center; height: 30px; margin: 0 4px; padding-right: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); }
 .page-field:focus-within { border-color: var(--focus); }
@@ -215,6 +222,7 @@ h2 { font-weight: 650; font-size: 14px; margin: 0; }
 .statusbar { height: 26px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 14px; background: var(--surface-2); border-top: 1px solid var(--border); font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 #document-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; color: var(--text-2); }
 .status-local { margin-left: auto; font-size: 10.5px; }
+#app.fullscreen .app-header, #app.fullscreen .statusbar { display: none; }
 
 /* Feedback + dialogs */
 .toast { position: fixed; bottom: 42px; left: 50%; transform: translateX(-50%); padding: 11px 18px; background: #1d2a24; color: #f2f6f3; border-radius: 10px; box-shadow: var(--shadow-lg); max-width: 640px; font-size: 13px; line-height: 1.6; white-space: pre-line; z-index: 100; animation: toast-in .18s ease-out; }
@@ -229,6 +237,16 @@ dialog input:not([type=checkbox]) { width: 100%; margin-top: 8px; padding: 9px 1
 .dialog-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: var(--accent-soft); color: var(--accent-text); }
 .dialog-icon svg { width: 22px; height: 22px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.shortcuts-dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.shortcuts-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.shortcuts-header h2 { margin: 0; }
+.shortcuts-header .icon-button { flex-shrink: 0; }
+.shortcuts-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; margin-top: 18px; }
+.shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.shortcut-row kbd { white-space: nowrap; }
+@media (max-width: 580px) {
+  .shortcuts-list { grid-template-columns: 1fr; }
+}
 .field-label { display: block; font-size: 12px; font-weight: 550; margin-top: 18px; }
 .field-note { font-size: 11px !important; color: var(--text-3) !important; margin-top: 6px !important; }
 #print-progress { color: var(--accent-text); min-height: 20px; }

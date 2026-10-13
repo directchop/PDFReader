@@ -1,5 +1,6 @@
 import { GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import * as bridge from './bridge';
 import './style.css';
 import { mountIcons } from './icons';
@@ -7,10 +8,10 @@ import { $, button, input, run } from './dom';
 import { activate, closeTab, enqueue, flushPosition, refreshTabs } from './tabs';
 import { renderSidebar } from './sidebar';
 import { hideFind, refreshFindCount, search, showFind } from './find';
-import { setScale, refreshToolbar, zoomBy } from './toolbar';
+import { setScale, refreshToolbar, refreshViewMenu, zoomBy } from './toolbar';
 import { cancelPrint, clearPrintOutput, initializePrint, preparePrint, showPrint } from './print';
 import { refreshRecent } from './recent';
-import { registerShortcuts } from './shortcuts';
+import { registerShortcuts, showShortcuts } from './shortcuts';
 import { getActiveTab, state, tabs } from './state';
 import { t } from './i18n';
 
@@ -39,6 +40,64 @@ function saveSidebarPreferences() {
   } catch {
   }
 }
+
+function syncFullscreen(fullscreen: boolean) {
+  $('app').classList.toggle('fullscreen', fullscreen);
+  button('fullscreen').setAttribute('aria-pressed', String(fullscreen));
+  const key = fullscreen ? 'toolbar.exitFullscreen' : 'toolbar.fullscreen';
+  button('fullscreen').setAttribute('aria-label', t(key));
+  button('fullscreen').title = t(key);
+}
+
+async function setFullscreen(fullscreen: boolean) {
+  await bridge.setFullscreen(fullscreen);
+  syncFullscreen(fullscreen);
+}
+
+document.addEventListener('fullscreenchange', () => {
+  if (!bridge.desktop) syncFullscreen(document.fullscreenElement !== null);
+});
+button('fullscreen').onclick = () => run(() => setFullscreen(!$('app').classList.contains('fullscreen')));
+button('shortcuts-toggle').onclick = showShortcuts;
+button('shortcuts-close').onclick = () => $<HTMLDialogElement>('shortcuts-dialog').close();
+button('shortcuts-link').onclick = event => {
+  event.preventDefault();
+  showShortcuts();
+};
+
+const viewMenu = $('view-menu');
+button('view-menu-toggle').onclick = () => {
+  viewMenu.hidden = !viewMenu.hidden;
+  button('view-menu-toggle').setAttribute('aria-expanded', String(!viewMenu.hidden));
+  refreshViewMenu();
+};
+document.querySelectorAll<HTMLButtonElement>('#view-menu [data-spread]').forEach(option => {
+  option.onclick = () => {
+    const tab = getActiveTab();
+    if (tab?.pdf) tab.viewer.spreadMode = Number(option.dataset.spread);
+    refreshViewMenu();
+  };
+});
+document.querySelectorAll<HTMLButtonElement>('#view-menu [data-scroll]').forEach(option => {
+  option.onclick = () => {
+    const tab = getActiveTab();
+    if (tab?.pdf) tab.viewer.scrollMode = Number(option.dataset.scroll);
+    refreshViewMenu();
+  };
+});
+document.addEventListener('pointerdown', event => {
+  if (viewMenu.hidden) return;
+  const target = event.target as Node;
+  if (viewMenu.contains(target) || button('view-menu-toggle').contains(target)) return;
+  viewMenu.hidden = true;
+  button('view-menu-toggle').setAttribute('aria-expanded', 'false');
+});
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !viewMenu.hidden) {
+    viewMenu.hidden = true;
+    button('view-menu-toggle').setAttribute('aria-expanded', 'false');
+  }
+});
 
 button('open').onclick = button('welcome-open').onclick = () => run(async () => enqueue(await bridge.openDocuments()));
 document.querySelector('.brand')!.addEventListener('click', event => {
@@ -147,17 +206,85 @@ document.addEventListener('click', event => {
     event.stopPropagation();
   }
 }, true);
+
+function tabForTarget(target: EventTarget | null) {
+  if (!(target instanceof Node)) return undefined;
+  return tabs.find(tab => tab.container.contains(target));
+}
+
+function scaleAroundPointer(tab: (typeof tabs)[number], factor: number, x: number, y: number) {
+  const current = tab.viewer.currentScale;
+  const next = Math.max(.25, Math.min(5, current * factor));
+  if (next === current) return;
+  tab.viewer.updateScale({
+    scaleFactor: next / current,
+    origin: [x, y],
+    drawingDelay: 400,
+  });
+}
+
+const documents = $('documents');
+documents.addEventListener('wheel', event => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  const tab = tabForTarget(event.target);
+  if (!tab?.pdf) return;
+  event.preventDefault();
+  scaleAroundPointer(tab, Math.exp(-event.deltaY * .002), event.clientX, event.clientY);
+}, { passive: false });
+
+if ('ongesturestart' in window) {
+  type SafariGestureEvent = Event & { scale: number; clientX: number; clientY: number };
+  let gestureScale = 1;
+  documents.addEventListener('gesturestart', event => {
+    if (!tabForTarget(event.target)?.pdf) return;
+    event.preventDefault();
+    gestureScale = (event as SafariGestureEvent).scale || 1;
+  }, { passive: false });
+  documents.addEventListener('gesturechange', event => {
+    const tab = tabForTarget(event.target);
+    if (!tab?.pdf) return;
+    event.preventDefault();
+    const gesture = event as SafariGestureEvent;
+    const nextScale = gesture.scale || gestureScale;
+    scaleAroundPointer(tab, nextScale / gestureScale, gesture.clientX, gesture.clientY);
+    gestureScale = nextScale;
+  }, { passive: false });
+}
+
 if (!bridge.desktop) {
   document.querySelector('.local-badge [data-i18n]')!.textContent = t('local.browserPreview');
+  let dragDepth = 0;
+  const hasFiles = (event: DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
+  window.addEventListener('dragenter', event => {
+    if (!hasFiles(event)) return;
+    dragDepth++;
+    document.body.classList.add('dragging');
+  });
+  window.addEventListener('dragleave', event => {
+    if (!hasFiles(event)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) document.body.classList.remove('dragging');
+  });
   window.addEventListener('dragover', event => event.preventDefault());
   window.addEventListener('drop', event => {
     event.preventDefault();
+    dragDepth = 0;
+    document.body.classList.remove('dragging');
     if (event.dataTransfer?.files.length) {
       run(async () => enqueue(await bridge.acceptBrowserFiles([...event.dataTransfer!.files])));
     }
   });
+} else {
+  void getCurrentWebview().onDragDropEvent(event => {
+    if (event.payload.type === 'enter' || event.payload.type === 'over') {
+      document.body.classList.add('dragging');
+    } else {
+      document.body.classList.remove('dragging');
+    }
+  });
 }
 window.addEventListener('localechange', () => {
+  syncFullscreen($('app').classList.contains('fullscreen'));
   refreshTabs();
   refreshToolbar();
   refreshFindCount();

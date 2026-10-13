@@ -103,3 +103,12 @@ export async function onDocumentsReady(callback: () => void) {
 export async function printDocument() {
   if (desktop) await invoke('print_document'); else window.print();
 }
+export async function setFullscreen(fullscreen: boolean) {
+  if (desktop) {
+    await invoke('set_fullscreen', { fullscreen });
+  } else if (fullscreen) {
+    await document.documentElement.requestFullscreen();
+  } else if (document.fullscreenElement) {
+    await document.exitFullscreen();
+  }
+}

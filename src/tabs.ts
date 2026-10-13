@@ -203,9 +203,18 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     schedulePositionSave(tab);
     if (getActiveTab() === tab) refreshToolbar();
   });
-  bus.on('rotationchanging', () => schedulePositionSave(tab));
-  bus.on('spreadmodechanged', () => schedulePositionSave(tab));
-  bus.on('scrollmodechanged', () => schedulePositionSave(tab));
+  bus.on('rotationchanging', () => {
+    schedulePositionSave(tab);
+    if (getActiveTab() === tab) refreshToolbar();
+  });
+  bus.on('spreadmodechanged', () => {
+    schedulePositionSave(tab);
+    if (getActiveTab() === tab) refreshToolbar();
+  });
+  bus.on('scrollmodechanged', () => {
+    schedulePositionSave(tab);
+    if (getActiveTab() === tab) refreshToolbar();
+  });
   bus.on('updatefindmatchescount', (event: { matchesCount: { current: number; total: number } }) => {
     tab.matchCount = { state: 'matches', ...event.matchesCount };
     if (getActiveTab() === tab) refreshFindCount();

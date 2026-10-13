@@ -97,6 +97,11 @@ fn print_document(window: tauri::WebviewWindow) -> Result<(), String> {
     window.print().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn set_fullscreen(window: tauri::WebviewWindow, fullscreen: bool) -> Result<(), String> {
+    window.set_fullscreen(fullscreen).map_err(|e| e.to_string())
+}
+
 fn queue_paths(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
     if let Ok(mut lib) = app.state::<SharedLibrary>().lock() {
         lib.queue(paths);
@@ -166,7 +171,8 @@ pub fn run() {
             save_position,
             read_document_range,
             close_document,
-            print_document
+            print_document,
+            set_fullscreen
         ])
         .build(tauri::generate_context!())
         .expect("PDFReader could not start");

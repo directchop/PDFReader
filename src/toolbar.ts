@@ -1,10 +1,14 @@
+import { ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import { $, button, input, sizeLabel } from './dom';
 import { getActiveTab } from './state';
 import { t } from './i18n';
 
 export function refreshToolbar() {
   const tab = getActiveTab();
-  if (!tab) return;
+  if (!tab) {
+    refreshViewMenu();
+    return;
+  }
   const { viewer, pdf, info } = tab;
   input('page-number').value = String(viewer.currentPageNumber || 1);
   input('page-number').max = String(pdf?.numPages || 1);
@@ -24,6 +28,24 @@ export function refreshToolbar() {
     zoom.add(option);
   }
   zoom.value = value || 'auto';
+  refreshViewMenu();
+}
+
+export function refreshViewMenu() {
+  const tab = getActiveTab();
+  const spread = tab?.viewer.spreadMode ?? SpreadMode.NONE;
+  const scroll = tab?.viewer.scrollMode ?? ScrollMode.VERTICAL;
+  button('view-menu-toggle').disabled = !tab?.pdf;
+  document.querySelectorAll<HTMLButtonElement>('#view-menu [data-spread]').forEach(option => {
+    const selected = Number(option.dataset.spread) === spread;
+    option.setAttribute('aria-checked', String(selected));
+    option.classList.toggle('selected', selected);
+  });
+  document.querySelectorAll<HTMLButtonElement>('#view-menu [data-scroll]').forEach(option => {
+    const selected = Number(option.dataset.scroll) === scroll;
+    option.setAttribute('aria-checked', String(selected));
+    option.classList.toggle('selected', selected);
+  });
 }
 
 export function zoomBy(amount: number) {
