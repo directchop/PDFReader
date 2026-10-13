@@ -1,10 +1,15 @@
 mod documents;
 
-use documents::{DocumentInfo, Library, OpenBatch, ReadingPosition, RecentFileView};
-use std::{path::PathBuf, sync::Mutex};
+use documents::{Bookmark, DocumentInfo, Library, OpenBatch, ReadingPosition, RecentFileView};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 use tauri::{Emitter, Manager, State};
 
-type SharedLibrary = Mutex<Library>;
+type SharedLibrary = Arc<Mutex<Library>>;
 
 #[tauri::command]
 async fn open_documents(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
@@ -40,10 +45,24 @@ fn save_session(
 
 #[tauri::command]
 fn restore_session(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
-    Ok(state
+    Ok(state.lock().map_err(|e| e.to_string())?.restore_session())
+}
+
+#[tauri::command]
+fn bookmarks(id: String, state: State<'_, SharedLibrary>) -> Result<Vec<Bookmark>, String> {
+    state.lock().map_err(|e| e.to_string())?.bookmarks(&id)
+}
+
+#[tauri::command]
+fn save_bookmarks(
+    id: String,
+    bookmarks: Vec<Bookmark>,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
         .lock()
         .map_err(|e| e.to_string())?
-        .restore_session())
+        .save_bookmarks(&id, bookmarks)
 }
 
 #[tauri::command]
@@ -155,7 +174,22 @@ pub fn run() {
                     .filter(|p| !p.to_string_lossy().starts_with('-'))
                     .map(PathBuf::from),
             );
-            app.manage(Mutex::new(library));
+            app.manage(Arc::new(Mutex::new(library)));
+            let library = app.state::<SharedLibrary>().inner().clone();
+            let handle = app.handle().clone();
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_millis(1500));
+                let changed = match library.lock() {
+                    Ok(mut library) => library.detect_changes(),
+                    Err(error) => {
+                        eprintln!("Could not check open files: {error}");
+                        continue;
+                    }
+                };
+                for info in changed {
+                    let _ = handle.emit("document-changed", info);
+                }
+            });
             let config = app
                 .config()
                 .app
@@ -186,6 +220,8 @@ pub fn run() {
             take_pending,
             save_session,
             restore_session,
+            bookmarks,
+            save_bookmarks,
             recent_documents,
             reopen_recent,
             clear_recent,
