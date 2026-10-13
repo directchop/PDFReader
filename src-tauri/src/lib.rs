@@ -1,6 +1,6 @@
 mod documents;
 
-use documents::{DocumentInfo, Library, OpenBatch, RecentFile};
+use documents::{DocumentInfo, Library, OpenBatch, ReadingPosition, RecentFileView};
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{Emitter, Manager, State};
 
@@ -27,8 +27,8 @@ fn take_pending(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
 }
 
 #[tauri::command]
-fn recent_documents(state: State<'_, SharedLibrary>) -> Result<Vec<RecentFile>, String> {
-    Ok(state.lock().map_err(|e| e.to_string())?.recent.clone())
+fn recent_documents(state: State<'_, SharedLibrary>) -> Result<Vec<RecentFileView>, String> {
+    Ok(state.lock().map_err(|e| e.to_string())?.recent_documents())
 }
 
 #[tauri::command]
@@ -38,9 +38,7 @@ async fn reopen_recent(
 ) -> Result<DocumentInfo, String> {
     let mut library = state.lock().map_err(|e| e.to_string())?;
     if !library.recent.iter().any(|r| r.path == path) {
-        return Err(
-            "最近使ったファイルの一覧にありません。開くボタンから選択してください。".into(),
-        );
+        return Err("not_in_recent".into());
     }
     library.open(&PathBuf::from(path))
 }
@@ -48,6 +46,26 @@ async fn reopen_recent(
 #[tauri::command]
 fn clear_recent(state: State<'_, SharedLibrary>) -> Result<(), String> {
     state.lock().map_err(|e| e.to_string())?.clear_history()
+}
+
+#[tauri::command]
+fn remove_recent(path: String, state: State<'_, SharedLibrary>) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove_recent(&path)
+}
+
+#[tauri::command]
+fn save_position(
+    id: String,
+    position: ReadingPosition,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_position(&id, position)
 }
 
 #[tauri::command]
@@ -79,6 +97,11 @@ fn print_document(window: tauri::WebviewWindow) -> Result<(), String> {
     window.print().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn set_fullscreen(window: tauri::WebviewWindow, fullscreen: bool) -> Result<(), String> {
+    window.set_fullscreen(fullscreen).map_err(|e| e.to_string())
+}
+
 fn queue_paths(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
     if let Ok(mut lib) = app.state::<SharedLibrary>().lock() {
         lib.queue(paths);
@@ -101,6 +124,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -143,9 +167,12 @@ pub fn run() {
             recent_documents,
             reopen_recent,
             clear_recent,
+            remove_recent,
+            save_position,
             read_document_range,
             close_document,
-            print_document
+            print_document,
+            set_fullscreen
         ])
         .build(tauri::generate_context!())
         .expect("PDFReader could not start");

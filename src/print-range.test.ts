@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parsePageRange } from './print-range';
+import { t } from './i18n';
 
 describe('print page ranges', () => {
   it('prints all pages when blank and deduplicates ordered ranges', () => {
@@ -10,8 +11,8 @@ describe('print page ranges', () => {
     expect(() => parsePageRange(value, 5)).toThrow();
   });
   it('bounds print allocations before iterating over untrusted page counts', () => {
-    expect(() => parsePageRange('', 1_000_000)).toThrow('100');
-    expect(() => parsePageRange('1-100, 102', 200)).toThrow('100');
+    expect(() => parsePageRange('', 1_000_000)).toThrow(t('print.pageLimit'));
+    expect(() => parsePageRange('1-100, 102', 200)).toThrow(t('print.pageLimit'));
     expect(parsePageRange('100', 200)).toEqual([100]);
   });
 });

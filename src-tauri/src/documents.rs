@@ -19,12 +19,36 @@ pub struct DocumentInfo {
     pub name: String,
     pub path: String,
     pub size: u64,
+    pub position: Option<ReadingPosition>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingPosition {
+    pub page: u32,
+    pub pages: u32,
+    pub scale: String,
+    pub rotation: u16,
+    pub spread: u8,
+    pub scroll: u8,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecentFile {
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub position: Option<ReadingPosition>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFileView {
+    pub name: String,
+    pub path: String,
+    pub position: Option<ReadingPosition>,
+    pub exists: bool,
 }
 
 struct OpenDocument {
@@ -35,7 +59,14 @@ struct OpenDocument {
 #[derive(Default, Serialize)]
 pub struct OpenBatch {
     pub documents: Vec<DocumentInfo>,
-    pub errors: Vec<String>,
+    pub errors: Vec<OpenError>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenError {
+    pub name: String,
+    pub code: String,
 }
 
 #[derive(Default)]
@@ -81,38 +112,43 @@ impl Library {
     pub fn open(&mut self, path: &Path) -> Result<DocumentInfo, String> {
         let path = path
             .canonicalize()
-            .map_err(|_| "ファイルが見つからないか、アクセスできません。".to_string())?;
+            .map_err(|_| "file_not_found".to_string())?;
         let key = path.to_string_lossy().to_string();
         if let Some(doc) = self.documents.values().find(|d| d.info.path == key) {
             return Ok(doc.info.clone());
         }
         if self.documents.len() >= MAX_OPEN {
-            return Err("同時に開けるPDFは12件です。タブを閉じてください。".into());
+            return Err("too_many_open".into());
         }
-        let mut file = File::open(&path)
-            .map_err(|_| "ファイルを開けません。アクセス権を確認してください。".to_string())?;
+        let mut file = File::open(&path).map_err(|_| "cannot_open".to_string())?;
         let metadata = file.metadata().map_err(|e| e.to_string())?;
         if !metadata.is_file() {
-            return Err("通常のPDFファイルを選択してください。".into());
+            return Err("not_a_file".into());
         }
         if metadata.len() > MAX_DOCUMENT {
-            return Err("初版で開けるPDFは1 GBまでです。".into());
+            return Err("too_large".into());
         }
         let mut header = [0u8; 1024];
         let read = file.read(&mut header).map_err(|e| e.to_string())?;
         if !header[..read].windows(5).any(|w| w == b"%PDF-") {
-            return Err("PDF形式のファイルではありません。".into());
+            return Err("not_pdf".into());
         }
         let name = path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
+        let position = self
+            .recent
+            .iter()
+            .find(|recent| recent.path == key)
+            .and_then(|recent| recent.position.clone());
         let info = DocumentInfo {
             id: Uuid::new_v4().to_string(),
             name: name.clone(),
             path: key.clone(),
             size: metadata.len(),
+            position: position.clone(),
         };
         self.documents.insert(
             info.id.clone(),
@@ -122,7 +158,14 @@ impl Library {
             },
         );
         self.recent.retain(|r| r.path != key);
-        self.recent.insert(0, RecentFile { name, path: key });
+        self.recent.insert(
+            0,
+            RecentFile {
+                name,
+                path: key,
+                position,
+            },
+        );
         self.recent.truncate(12);
         // A read-only configuration directory must not prevent reading a PDF.
         if let Err(error) = self.persist_history() {
@@ -136,10 +179,14 @@ impl Library {
         for path in paths {
             match self.open(&path) {
                 Ok(info) => batch.documents.push(info),
-                Err(error) => batch.errors.push(format!(
-                    "{}: {error}",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                )),
+                Err(code) => batch.errors.push(OpenError {
+                    name: path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                    code,
+                }),
             }
         }
         batch
@@ -155,13 +202,79 @@ impl Library {
         self.documents.remove(id);
     }
 
+    pub fn save_position(&mut self, id: &str, position: ReadingPosition) -> Result<(), String> {
+        let path = self
+            .documents
+            .get(id)
+            .ok_or_else(|| "document_closed".to_string())?
+            .info
+            .path
+            .clone();
+        let previous_document_position = self
+            .documents
+            .get(id)
+            .and_then(|document| document.info.position.clone());
+        let scale_valid = matches!(position.scale.as_str(), "auto" | "page-width" | "page-fit")
+            || position
+                .scale
+                .parse::<f64>()
+                .is_ok_and(|scale| (0.1..=10.0).contains(&scale));
+        if position.page < 1 || !matches!(position.rotation, 0 | 90 | 180 | 270) || !scale_valid {
+            return Err("invalid_position".into());
+        }
+        let recent = self
+            .recent
+            .iter_mut()
+            .find(|recent| recent.path == path)
+            .ok_or_else(|| "not_in_recent".to_string())?;
+        let previous = recent.position.replace(position.clone());
+        if let Some(document) = self.documents.get_mut(id) {
+            document.info.position = Some(position);
+        }
+        if let Err(error) = self.persist_history() {
+            if let Some(recent) = self.recent.iter_mut().find(|recent| recent.path == path) {
+                recent.position = previous.clone();
+            }
+            if let Some(document) = self.documents.get_mut(id) {
+                document.info.position = previous_document_position;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn remove_recent(&mut self, path: &str) -> Result<(), String> {
+        let previous = self.recent.clone();
+        self.recent.retain(|recent| recent.path != path);
+        if previous.len() == self.recent.len() {
+            return Err("not_in_recent".into());
+        }
+        if let Err(error) = self.persist_history() {
+            self.recent = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn recent_documents(&self) -> Vec<RecentFileView> {
+        self.recent
+            .iter()
+            .map(|recent| RecentFileView {
+                name: recent.name.clone(),
+                path: recent.path.clone(),
+                position: recent.position.clone(),
+                exists: Path::new(&recent.path).exists(),
+            })
+            .collect()
+    }
+
     pub fn reader(&self, id: &str, begin: u64, end: u64) -> Result<Arc<Mutex<File>>, String> {
         let doc = self
             .documents
             .get(id)
-            .ok_or("このPDFは閉じられています。")?;
+            .ok_or_else(|| "document_closed".to_string())?;
         if begin >= end || end > doc.info.size || end - begin > MAX_READ {
-            return Err("無効な読み取り範囲です。".into());
+            return Err("invalid_range".into());
         }
         Ok(Arc::clone(&doc.file))
     }
@@ -172,9 +285,8 @@ pub fn read_range(file: Arc<Mutex<File>>, begin: u64, end: u64) -> Result<Vec<u8
     file.seek(SeekFrom::Start(begin))
         .map_err(|e| e.to_string())?;
     let mut buffer = vec![0; (end - begin) as usize];
-    file.read_exact(&mut buffer).map_err(|_| {
-        "PDFの読み取りに失敗しました。ファイルが変更された可能性があります。".to_string()
-    })?;
+    file.read_exact(&mut buffer)
+        .map_err(|_| "read_failed".to_string())?;
     Ok(buffer)
 }
 
@@ -198,12 +310,18 @@ mod tests {
             read_range(lib.reader(&info.id, 0, 5).unwrap(), 0, 5).unwrap(),
             b"%PDF-"
         );
-        assert!(lib.reader("unknown", 0, 1).is_err());
-        assert!(lib.reader(&info.id, 5, 4).is_err());
-        assert!(lib.reader(&info.id, 0, info.size + 1).is_err());
-        assert!(lib.reader(&info.id, 0, MAX_READ + 1).is_err());
+        assert_eq!(lib.reader("unknown", 0, 1).unwrap_err(), "document_closed");
+        assert_eq!(lib.reader(&info.id, 5, 4).unwrap_err(), "invalid_range");
+        assert_eq!(
+            lib.reader(&info.id, 0, info.size + 1).unwrap_err(),
+            "invalid_range"
+        );
+        assert_eq!(
+            lib.reader(&info.id, 0, MAX_READ + 1).unwrap_err(),
+            "invalid_range"
+        );
         lib.close(&info.id);
-        assert!(lib.reader(&info.id, 0, 1).is_err());
+        assert_eq!(lib.reader(&info.id, 0, 1).unwrap_err(), "document_closed");
     }
 
     #[test]
@@ -213,6 +331,7 @@ mod tests {
         let mut lib = Library::default();
         let batch = lib.open_many([bad.path().into(), f.path().into(), f.path().into()]);
         assert_eq!(batch.errors.len(), 1);
+        assert_eq!(batch.errors[0].code, "not_pdf");
         assert_eq!(batch.documents.len(), 2);
         assert_eq!(batch.documents[0].id, batch.documents[1].id);
         assert_eq!(lib.recent.len(), 1);
@@ -231,5 +350,78 @@ mod tests {
         assert!(Library::with_history(history.clone()).recent.is_empty());
         fs::write(&history, b"broken").unwrap();
         assert!(Library::with_history(history).recent.is_empty());
+    }
+
+    #[test]
+    fn loads_legacy_history_without_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("recent.json");
+        fs::write(
+            &history,
+            r#"[{"name":"legacy.pdf","path":"/legacy/legacy.pdf"}]"#,
+        )
+        .unwrap();
+        let library = Library::with_history(history);
+        assert_eq!(library.recent.len(), 1);
+        assert!(library.recent[0].position.is_none());
+    }
+
+    #[test]
+    fn saves_valid_positions_and_rejects_invalid_positions() {
+        let file = pdf();
+        let mut library = Library::default();
+        let info = library.open(file.path()).unwrap();
+        let position = ReadingPosition {
+            page: 1,
+            pages: 1,
+            scale: "auto".into(),
+            rotation: 0,
+            spread: 0,
+            scroll: 0,
+        };
+        library.save_position(&info.id, position.clone()).unwrap();
+        assert_eq!(library.recent[0].position.as_ref().unwrap().scale, "auto");
+
+        let invalid = ReadingPosition {
+            page: 0,
+            ..position
+        };
+        assert_eq!(
+            library.save_position(&info.id, invalid).unwrap_err(),
+            "invalid_position"
+        );
+    }
+
+    #[test]
+    fn removes_recent_entry_and_persists_the_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("recent.json");
+        let file = pdf();
+        let mut library = Library::with_history(history.clone());
+        let info = library.open(file.path()).unwrap();
+        library.remove_recent(&info.path).unwrap();
+        assert!(Library::with_history(history).recent.is_empty());
+        assert_eq!(
+            library.remove_recent(&info.path).unwrap_err(),
+            "not_in_recent"
+        );
+    }
+
+    #[test]
+    fn recent_view_computes_existence_without_persisting_it() {
+        let file = pdf();
+        let mut library = Library::default();
+        let info = library.open(file.path()).unwrap();
+        library.recent.push(RecentFile {
+            name: "missing.pdf".into(),
+            path: format!("{}.missing", info.path),
+            position: None,
+        });
+
+        let recent = library.recent_documents();
+        assert!(recent[0].exists);
+        assert!(!recent[1].exists);
+        let persisted = serde_json::to_value(&library.recent).unwrap();
+        assert!(persisted[0].get("exists").is_none());
     }
 }
