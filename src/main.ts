@@ -1,6 +1,7 @@
 import { GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as bridge from './bridge';
 import './style.css';
 import { mountIcons } from './icons';
@@ -275,6 +276,10 @@ if (!bridge.desktop) {
     }
   });
 } else {
+  const currentWindow = getCurrentWindow();
+  void currentWindow.onResized(async () => {
+    syncFullscreen(await currentWindow.isFullscreen());
+  });
   void getCurrentWebview().onDragDropEvent(event => {
     if (event.payload.type === 'enter' || event.payload.type === 'over') {
       document.body.classList.add('dragging');
