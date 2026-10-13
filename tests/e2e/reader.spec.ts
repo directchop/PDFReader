@@ -20,6 +20,12 @@ async function useJapanese(page: Page) {
   await page.addInitScript(() => localStorage.setItem('pdfreader.locale', 'ja'));
 }
 
+test('update settings are hidden in the browser preview', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#settings-toggle').click();
+  await expect(page.locator('#updates-section')).toBeHidden();
+});
+
 async function addTextNote(page: Page, text: string) {
   await page.locator('#annotate-toggle').click();
   await page.locator('[data-annotation-mode="3"]').click();

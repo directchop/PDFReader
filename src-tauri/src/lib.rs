@@ -8,8 +8,119 @@ use std::{
     time::Duration,
 };
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 
 type SharedLibrary = Arc<Mutex<Library>>;
+const UPDATE_ENDPOINT: &str =
+    "https://github.com/directchop/PDFReader/releases/latest/download/latest.json";
+
+#[derive(Default)]
+struct UpdateState {
+    pending: Mutex<Option<tauri_plugin_updater::Update>>,
+}
+
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
+    date: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+fn updater_key_configured(key: Option<&str>) -> bool {
+    key.is_some_and(|key| !key.trim().is_empty())
+}
+
+fn updater_pubkey() -> Option<&'static str> {
+    let key = option_env!("PDFREADER_UPDATER_PUBKEY");
+    updater_key_configured(key).then_some(key).flatten()
+}
+
+#[tauri::command]
+async fn check_update(
+    app: tauri::AppHandle,
+    state: State<'_, UpdateState>,
+) -> Result<Option<UpdateInfo>, String> {
+    let Some(key) = updater_pubkey() else {
+        return Err("updater_unavailable".into());
+    };
+    let endpoint = UPDATE_ENDPOINT
+        .parse()
+        .map_err(|_| "update_failed".to_string())?;
+    let updater = app
+        .updater_builder()
+        .pubkey(key)
+        .endpoints(vec![endpoint])
+        .map_err(|_| "update_failed".to_string())?
+        .build()
+        .map_err(|_| "update_failed".to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|_| "update_failed".to_string())?;
+    let Some(update) = update else {
+        *state
+            .pending
+            .lock()
+            .map_err(|_| "update_failed".to_string())? = None;
+        return Ok(None);
+    };
+    let info = UpdateInfo {
+        version: update.version.clone(),
+        notes: update.body.clone(),
+        date: update.date.map(|date| date.to_string()),
+    };
+    *state
+        .pending
+        .lock()
+        .map_err(|_| "update_failed".to_string())? = Some(update);
+    Ok(Some(info))
+}
+
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    state: State<'_, UpdateState>,
+) -> Result<(), String> {
+    if updater_pubkey().is_none() {
+        return Err("updater_unavailable".into());
+    }
+    let update = state
+        .pending
+        .lock()
+        .map_err(|_| "update_failed".to_string())?
+        .take()
+        .ok_or_else(|| "update_failed".to_string())?;
+    let progress_app = app.clone();
+    let mut downloaded = 0u64;
+    if update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded = downloaded.saturating_add(chunk as u64);
+                let _ = progress_app.emit("update-progress", UpdateProgress { downloaded, total });
+            },
+            || {},
+        )
+        .await
+        .is_err()
+    {
+        if let Ok(mut pending) = state.pending.lock() {
+            *pending = Some(update);
+        }
+        return Err("update_failed".into());
+    }
+    app.restart();
+}
+
+#[tauri::command]
+fn update_available_in_build() -> bool {
+    updater_pubkey().is_some()
+}
 
 #[tauri::command]
 async fn open_documents(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
@@ -208,7 +319,11 @@ fn queue_paths(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if let Some(key) = updater_pubkey() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().pubkey(key).build());
+    }
+    let app = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             queue_paths(
                 app,
@@ -234,6 +349,7 @@ pub fn run() {
                     .map(PathBuf::from),
             );
             app.manage(Arc::new(Mutex::new(library)));
+            app.manage(UpdateState::default());
             let library = app.state::<SharedLibrary>().inner().clone();
             let handle = app.handle().clone();
             thread::spawn(move || loop {
@@ -290,6 +406,9 @@ pub fn run() {
             save_position,
             read_document_range,
             commit_generation,
+            check_update,
+            install_update,
+            update_available_in_build,
             close_document,
             print_document,
             set_fullscreen
@@ -310,4 +429,17 @@ pub fn run() {
         #[cfg(not(target_os = "macos"))]
         let _ = (app, event);
     });
+}
+
+#[cfg(test)]
+mod updater_tests {
+    use super::updater_key_configured;
+
+    #[test]
+    fn updater_is_enabled_only_for_a_nonempty_public_key() {
+        assert!(!updater_key_configured(None));
+        assert!(!updater_key_configured(Some("")));
+        assert!(!updater_key_configured(Some(" \t")));
+        assert!(updater_key_configured(Some("public-key")));
+    }
 }

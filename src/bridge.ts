@@ -14,6 +14,8 @@ export interface RecentFile { name: string; path: string; position: ReadingPosit
 export interface OpenError { name: string; code: string }
 export interface OpenBatch { documents: DocumentInfo[]; errors: OpenError[]; active: string | null }
 export interface Bookmark { page: number; label: string }
+export interface UpdateInfo { version: string; notes: string | null; date: string | null }
+export interface UpdateProgress { downloaded: number; total: number | null }
 
 export const desktop = isTauri();
 const browserFiles = new Map<string, File>();
@@ -125,6 +127,15 @@ export const pickSavePath = (id: string, suggestedName: string): Promise<string 
 export const writeSavedCopy = (token: string, bytes: Uint8Array): Promise<string> => desktop
   ? invoke('write_saved_copy', bytes, { headers: { 'x-save-token': token } })
   : Promise.reject(new Error('invalid_save_token'));
+export const updateAvailableInBuild = (): Promise<boolean> => desktop
+  ? invoke('update_available_in_build')
+  : Promise.resolve(false);
+export const checkUpdate = (): Promise<UpdateInfo | null> => desktop
+  ? invoke('check_update')
+  : Promise.reject(new Error('updater_unavailable'));
+export const installUpdate = (): Promise<void> => desktop
+  ? invoke('install_update')
+  : Promise.reject(new Error('updater_unavailable'));
 export async function onDocumentsReady(callback: () => void) {
   if (desktop) return listen('documents-ready', callback);
   return () => {};
