@@ -5,12 +5,28 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
 pub const MAX_READ: u64 = 4 * 1024 * 1024;
 pub const MAX_DOCUMENT: u64 = 1024 * 1024 * 1024;
 pub const MAX_OPEN: usize = 12;
+pub const MAX_BOOKMARKS: usize = 200;
+pub const MAX_BOOKMARK_FILES: usize = 500;
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bookmark {
+    pub page: u32,
+    pub label: String,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+struct BookmarkEntry {
+    bookmarks: Vec<Bookmark>,
+    touched: u64,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +70,8 @@ pub struct RecentFileView {
 struct OpenDocument {
     info: DocumentInfo,
     file: Arc<Mutex<File>>,
+    modified: Option<SystemTime>,
+    pending_change: Option<(u64, Option<SystemTime>, u8)>,
 }
 
 #[derive(Default, Serialize)]
@@ -84,6 +102,8 @@ pub struct Library {
     pub pending: OpenBatch,
     history_file: Option<PathBuf>,
     session_file: Option<PathBuf>,
+    bookmarks_file: Option<PathBuf>,
+    bookmark_store: HashMap<String, BookmarkEntry>,
 }
 
 impl Library {
@@ -92,9 +112,18 @@ impl Library {
             .ok()
             .and_then(|data| serde_json::from_slice(&data).ok())
             .unwrap_or_default();
+        let data_dir = path.parent();
+        let bookmarks_file = data_dir.map(|dir| dir.join("bookmarks.json"));
+        let bookmark_store = bookmarks_file
+            .as_ref()
+            .and_then(|file| fs::read(file).ok())
+            .and_then(|data| serde_json::from_slice(&data).ok())
+            .unwrap_or_default();
         Self {
             recent: recent.into_iter().take(12).collect(),
-            session_file: path.parent().map(|dir| dir.join("session.json")),
+            session_file: data_dir.map(|dir| dir.join("session.json")),
+            bookmarks_file,
+            bookmark_store,
             history_file: Some(path),
             ..Self::default()
         }
@@ -127,6 +156,78 @@ impl Library {
         let data = serde_json::to_vec_pretty(session).map_err(|e| e.to_string())?;
         fs::write(&temp, data).map_err(|e| e.to_string())?;
         fs::rename(temp, path).map_err(|e| e.to_string())
+    }
+
+    fn persist_bookmarks(&self) -> Result<(), String> {
+        let Some(path) = &self.bookmarks_file else {
+            return Ok(());
+        };
+        let temp = path.with_extension("tmp");
+        let data = serde_json::to_vec_pretty(&self.bookmark_store).map_err(|e| e.to_string())?;
+        fs::write(&temp, data).map_err(|e| e.to_string())?;
+        fs::rename(temp, path).map_err(|e| e.to_string())
+    }
+
+    fn trim_bookmarks(&mut self) {
+        while self.bookmark_store.len() > MAX_BOOKMARK_FILES {
+            let oldest = self
+                .bookmark_store
+                .iter()
+                .min_by_key(|(path, entry)| (entry.touched, *path))
+                .map(|(path, _)| path.clone());
+            if let Some(path) = oldest {
+                self.bookmark_store.remove(&path);
+            }
+        }
+    }
+
+    pub fn bookmarks(&mut self, id: &str) -> Result<Vec<Bookmark>, String> {
+        let path = self
+            .documents
+            .get(id)
+            .ok_or_else(|| "document_closed".to_string())?
+            .info
+            .path
+            .clone();
+        let entry = self.bookmark_store.entry(path).or_default();
+        entry.touched = timestamp();
+        let bookmarks = entry.bookmarks.clone();
+        self.trim_bookmarks();
+        if let Err(error) = self.persist_bookmarks() {
+            eprintln!("Could not save bookmarks: {error}");
+        }
+        Ok(bookmarks)
+    }
+
+    pub fn save_bookmarks(&mut self, id: &str, bookmarks: Vec<Bookmark>) -> Result<(), String> {
+        if bookmarks.len() > MAX_BOOKMARKS
+            || bookmarks
+                .iter()
+                .any(|bookmark| bookmark.page < 1 || bookmark.label.chars().count() > 200)
+        {
+            return Err("invalid_bookmark".into());
+        }
+        let path = self
+            .documents
+            .get(id)
+            .ok_or_else(|| "document_closed".to_string())?
+            .info
+            .path
+            .clone();
+        let previous = self.bookmark_store.clone();
+        self.bookmark_store.insert(
+            path,
+            BookmarkEntry {
+                bookmarks,
+                touched: timestamp(),
+            },
+        );
+        self.trim_bookmarks();
+        if let Err(error) = self.persist_bookmarks() {
+            self.bookmark_store = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn save_session(&self, ids: &[String], active: Option<&str>) -> Result<(), String> {
@@ -196,6 +297,8 @@ impl Library {
             OpenDocument {
                 info: info.clone(),
                 file: Arc::new(Mutex::new(file)),
+                modified: metadata.modified().ok(),
+                pending_change: None,
             },
         );
         self.recent.retain(|r| r.path != key);
@@ -231,6 +334,72 @@ impl Library {
             }
         }
         batch
+    }
+
+    pub fn detect_changes(&mut self) -> Vec<DocumentInfo> {
+        let mut changed = Vec::new();
+        for document in self.documents.values_mut() {
+            let metadata = match fs::metadata(&document.info.path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    eprintln!("Could not check {}: {error}", document.info.path);
+                    document.pending_change = None;
+                    continue;
+                }
+            };
+            let current = (metadata.len(), metadata.modified().ok());
+            if current.0 == document.info.size && current.1 == document.modified {
+                document.pending_change = None;
+                continue;
+            }
+            let stable = match document.pending_change {
+                Some((size, modified, polls)) if (size, modified) == current => polls + 1,
+                _ => 1,
+            };
+            if stable < 2 {
+                document.pending_change = Some((current.0, current.1, stable));
+                continue;
+            }
+            document.pending_change = None;
+            if current.0 > MAX_DOCUMENT {
+                eprintln!("Changed PDF is too large: {}", document.info.path);
+                continue;
+            }
+            let mut file = match File::open(&document.info.path) {
+                Ok(file) => file,
+                Err(error) => {
+                    eprintln!("Could not reload {}: {error}", document.info.path);
+                    continue;
+                }
+            };
+            let reopened = match file.metadata() {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    eprintln!("Could not validate {}: {error}", document.info.path);
+                    continue;
+                }
+            };
+            if reopened.len() != current.0 || reopened.modified().ok() != current.1 {
+                continue;
+            }
+            let mut header = [0u8; 1024];
+            let read = match file.read(&mut header) {
+                Ok(read) => read,
+                Err(error) => {
+                    eprintln!("Could not read {}: {error}", document.info.path);
+                    continue;
+                }
+            };
+            if !header[..read].windows(5).any(|window| window == b"%PDF-") {
+                eprintln!("Changed file is not a PDF: {}", document.info.path);
+                continue;
+            }
+            document.file = Arc::new(Mutex::new(file));
+            document.info.size = current.0;
+            document.modified = current.1;
+            changed.push(document.info.clone());
+        }
+        changed
     }
 
     pub fn queue(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
@@ -319,6 +488,13 @@ impl Library {
         }
         Ok(Arc::clone(&doc.file))
     }
+}
+
+fn timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 pub fn read_range(file: Arc<Mutex<File>>, begin: u64, end: u64) -> Result<Vec<u8>, String> {
@@ -490,10 +666,7 @@ mod tests {
 
         restored
             .persist_session(&SavedSession {
-                paths: vec![
-                    first_info.path,
-                    missing.to_string_lossy().into_owned(),
-                ],
+                paths: vec![first_info.path, missing.to_string_lossy().into_owned()],
                 active: Some(second_info.path.clone()),
             })
             .unwrap();
@@ -501,5 +674,83 @@ mod tests {
         let batch = restored.restore_session();
         assert_eq!(batch.errors.len(), 1);
         assert_eq!(batch.errors[0].code, "file_not_found");
+    }
+
+    #[test]
+    fn bookmarks_validate_and_persist_independently() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("recent.json");
+        let file = pdf();
+        let mut library = Library::with_history(history.clone());
+        let info = library.open(file.path()).unwrap();
+        assert_eq!(
+            library.save_bookmarks(
+                &info.id,
+                vec![Bookmark {
+                    page: 0,
+                    label: "bad".into(),
+                }]
+            ),
+            Err("invalid_bookmark".into())
+        );
+        assert_eq!(
+            library.save_bookmarks(
+                &info.id,
+                vec![Bookmark {
+                    page: 1,
+                    label: "x".repeat(201),
+                }]
+            ),
+            Err("invalid_bookmark".into())
+        );
+        let saved = Bookmark {
+            page: 3,
+            label: "Chapter".into(),
+        };
+        library
+            .save_bookmarks(&info.id, vec![saved.clone()])
+            .unwrap();
+
+        let mut reopened = Library::with_history(history);
+        let reopened_info = reopened.open(file.path()).unwrap();
+        let loaded = reopened.bookmarks(&reopened_info.id).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].page, saved.page);
+        assert_eq!(loaded[0].label, saved.label);
+    }
+
+    #[test]
+    fn bookmarks_evict_the_oldest_file_above_the_cap() {
+        let mut library = Library::default();
+        for index in 0..=MAX_BOOKMARK_FILES {
+            library.bookmark_store.insert(
+                format!("path-{index:03}"),
+                BookmarkEntry {
+                    bookmarks: Vec::new(),
+                    touched: index as u64,
+                },
+            );
+        }
+        library.trim_bookmarks();
+        assert_eq!(library.bookmark_store.len(), MAX_BOOKMARK_FILES);
+        assert!(!library.bookmark_store.contains_key("path-000"));
+        assert!(library.bookmark_store.contains_key("path-500"));
+    }
+
+    #[test]
+    fn changed_file_requires_two_stable_polls_and_invalid_content_is_ignored() {
+        let file = pdf();
+        let mut library = Library::default();
+        let info = library.open(file.path()).unwrap();
+        fs::write(file.path(), b"%PDF-updated contents").unwrap();
+        assert!(library.detect_changes().is_empty());
+        let changed = library.detect_changes();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].id, info.id);
+        assert_eq!(changed[0].size, 21);
+
+        fs::write(file.path(), b"not a pdf").unwrap();
+        assert!(library.detect_changes().is_empty());
+        assert!(library.detect_changes().is_empty());
     }
 }

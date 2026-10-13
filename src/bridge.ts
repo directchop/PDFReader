@@ -13,6 +13,7 @@ export interface DocumentInfo { id: string; name: string; path: string; size: nu
 export interface RecentFile { name: string; path: string; position: ReadingPosition | null; exists: boolean }
 export interface OpenError { name: string; code: string }
 export interface OpenBatch { documents: DocumentInfo[]; errors: OpenError[]; active: string | null }
+export interface Bookmark { page: number; label: string }
 
 export const desktop = isTauri();
 const browserFiles = new Map<string, File>();
@@ -65,7 +66,7 @@ export async function openDocuments(): Promise<OpenBatch> {
     const picker = document.createElement('input');
     picker.type = 'file'; picker.accept = 'application/pdf,.pdf'; picker.multiple = true;
     picker.addEventListener('change', async () => resolve(await acceptBrowserFiles([...picker.files!])));
-    picker.addEventListener('cancel', () => resolve({ documents: [], errors: [] }));
+    picker.addEventListener('cancel', () => resolve({ documents: [], errors: [], active: null }));
     picker.click();
   });
 }
@@ -104,8 +105,23 @@ export const saveSession = (ids: string[], active: string | null): Promise<void>
 export const restoreSession = (): Promise<OpenBatch> => desktop
   ? invoke('restore_session')
   : Promise.resolve({ documents: [], errors: [], active: null });
+export const bookmarks = async (info: DocumentInfo): Promise<Bookmark[]> => {
+  if (desktop) return invoke('bookmarks', { id: info.id });
+  try {
+    return JSON.parse(localStorage.getItem(`pdfreader.bookmarks:${info.name}:${info.size}`) || '[]') as Bookmark[];
+  } catch {
+    return [];
+  }
+};
+export const saveBookmarks = (info: DocumentInfo, value: Bookmark[]): Promise<void> => desktop
+  ? invoke('save_bookmarks', { id: info.id, bookmarks: value })
+  : Promise.resolve(localStorage.setItem(`pdfreader.bookmarks:${info.name}:${info.size}`, JSON.stringify(value)));
 export async function onDocumentsReady(callback: () => void) {
   if (desktop) return listen('documents-ready', callback);
+  return () => {};
+}
+export async function onDocumentChanged(callback: (info: DocumentInfo) => void) {
+  if (desktop) return listen<DocumentInfo>('document-changed', event => callback(event.payload));
   return () => {};
 }
 export async function printDocument() {
