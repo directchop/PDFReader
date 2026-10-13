@@ -1,6 +1,6 @@
 import { ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import { $, button } from './dom';
-import { getActiveTab } from './state';
+import { getActiveTab, type ReaderTab } from './state';
 import { flushPosition } from './tabs';
 import { setFullscreen } from './fullscreen';
 
@@ -8,6 +8,12 @@ type ViewState = { scale: string; spread: number; scroll: number };
 
 let saved: { id: string; view: ViewState } | undefined;
 let cursorTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function presentationBaseline(tab: ReaderTab): ViewState | undefined {
+  return $('app').classList.contains('presenting') && saved?.id === tab.info.id
+    ? saved.view
+    : undefined;
+}
 
 function showCursor() {
   $('app').classList.remove('cursor-hidden');

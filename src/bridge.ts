@@ -9,7 +9,7 @@ export interface ReadingPosition {
   spread: number;
   scroll: number;
 }
-export interface DocumentInfo { id: string; name: string; path: string; size: number; position: ReadingPosition | null }
+export interface DocumentInfo { id: string; name: string; path: string; size: number; generation: number; position: ReadingPosition | null }
 export interface RecentFile { name: string; path: string; position: ReadingPosition | null; exists: boolean }
 export interface OpenError { name: string; code: string }
 export interface OpenBatch { documents: DocumentInfo[]; errors: OpenError[]; active: string | null }
@@ -55,7 +55,7 @@ export async function acceptBrowserFiles(files: File[]): Promise<OpenBatch> {
     if (!header.includes('%PDF-')) { result.errors.push({ name: file.name, code: 'not_pdf' }); continue; }
     const id = crypto.randomUUID();
     browserFiles.set(id, file);
-    result.documents.push({ id, name: file.name, path: file.name, size: file.size, position: readBrowserPosition(file.name, file.size) });
+    result.documents.push({ id, name: file.name, path: file.name, size: file.size, generation: 0, position: readBrowserPosition(file.name, file.size) });
   }
   return result;
 }
@@ -71,15 +71,18 @@ export async function openDocuments(): Promise<OpenBatch> {
   });
 }
 
-export async function readRange(id: string, begin: number, end: number): Promise<Uint8Array> {
+export async function readRange(id: string, generation: number, begin: number, end: number): Promise<Uint8Array> {
   if (!desktop) {
     const file = browserFiles.get(id);
     if (!file) throw new Error('document_closed');
     return new Uint8Array(await file.slice(begin, end).arrayBuffer());
   }
-  const data = await invoke<ArrayBuffer | number[]>('read_document_range', { id, begin, end });
+  const data = await invoke<ArrayBuffer | number[]>('read_document_range', { id, generation, begin, end });
   return new Uint8Array(data);
 }
+export const commitGeneration = (id: string, generation: number): Promise<void> => desktop
+  ? invoke('commit_generation', { id, generation })
+  : Promise.resolve();
 export async function closeDocument(id: string) {
   if (desktop) await invoke('close_document', { id }); else browserFiles.delete(id);
 }

@@ -13,7 +13,7 @@ export class LocalPdfTransport extends PDFDataRangeTransport {
     const bytes = new Uint8Array(end - begin);
     for (let offset = begin; offset < end; offset += 1024 * 1024) {
       if (this.stopped) return;
-      bytes.set(await readRange(this.info.id, offset, Math.min(end, offset + 1024 * 1024)), offset - begin);
+      bytes.set(await readRange(this.info.id, this.info.generation, offset, Math.min(end, offset + 1024 * 1024)), offset - begin);
     }
     if (!this.stopped) this.onDataRange(begin, bytes);
   }

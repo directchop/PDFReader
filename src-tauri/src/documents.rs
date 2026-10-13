@@ -35,6 +35,7 @@ pub struct DocumentInfo {
     pub name: String,
     pub path: String,
     pub size: u64,
+    pub generation: u64,
     pub position: Option<ReadingPosition>,
 }
 
@@ -67,16 +68,30 @@ pub struct RecentFileView {
     pub exists: bool,
 }
 
+struct FileGeneration {
+    generation: u64,
+    file: Arc<Mutex<File>>,
+    size: u64,
+    modified: Option<SystemTime>,
+}
+
 struct OpenDocument {
     info: DocumentInfo,
-    file: Arc<Mutex<File>>,
-    modified: Option<SystemTime>,
+    current: FileGeneration,
+    pending: Option<FileGeneration>,
     pending_change: Option<(u64, Option<SystemTime>, u8)>,
 }
 
 struct SaveTarget {
     source: PathBuf,
     destination: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct ReadCapability {
+    file: Arc<Mutex<File>>,
+    size: u64,
+    modified: Option<SystemTime>,
 }
 
 #[derive(Default, Serialize)]
@@ -296,14 +311,20 @@ impl Library {
             name: name.clone(),
             path: key.clone(),
             size: metadata.len(),
+            generation: 1,
             position: position.clone(),
         };
         self.documents.insert(
             info.id.clone(),
             OpenDocument {
                 info: info.clone(),
-                file: Arc::new(Mutex::new(file)),
-                modified: metadata.modified().ok(),
+                current: FileGeneration {
+                    generation: info.generation,
+                    file: Arc::new(Mutex::new(file)),
+                    size: metadata.len(),
+                    modified: metadata.modified().ok(),
+                },
+                pending: None,
                 pending_change: None,
             },
         );
@@ -354,7 +375,16 @@ impl Library {
                 }
             };
             let current = (metadata.len(), metadata.modified().ok());
-            if current.0 == document.info.size && current.1 == document.modified {
+            if current.0 == document.current.size && current.1 == document.current.modified {
+                document.pending = None;
+                document.pending_change = None;
+                continue;
+            }
+            if document
+                .pending
+                .as_ref()
+                .is_some_and(|pending| (pending.size, pending.modified) == current)
+            {
                 document.pending_change = None;
                 continue;
             }
@@ -385,7 +415,10 @@ impl Library {
                     continue;
                 }
             };
-            if reopened.len() != current.0 || reopened.modified().ok() != current.1 {
+            if !reopened.is_file()
+                || reopened.len() != current.0
+                || reopened.modified().ok() != current.1
+            {
                 continue;
             }
             let mut header = [0u8; 1024];
@@ -400,12 +433,46 @@ impl Library {
                 eprintln!("Changed file is not a PDF: {}", document.info.path);
                 continue;
             }
-            document.file = Arc::new(Mutex::new(file));
-            document.info.size = current.0;
-            document.modified = current.1;
-            changed.push(document.info.clone());
+            let generation = document
+                .pending
+                .as_ref()
+                .map_or(document.current.generation, |pending| pending.generation)
+                .saturating_add(1);
+            document.pending = Some(FileGeneration {
+                generation,
+                file: Arc::new(Mutex::new(file)),
+                size: current.0,
+                modified: current.1,
+            });
+            let mut info = document.info.clone();
+            info.size = current.0;
+            info.generation = generation;
+            changed.push(info);
         }
         changed
+    }
+
+    pub fn commit_generation(&mut self, id: &str, generation: u64) -> Result<(), String> {
+        let document = self
+            .documents
+            .get_mut(id)
+            .ok_or_else(|| "document_closed".to_string())?;
+        if document.current.generation == generation {
+            return Ok(());
+        }
+        if document
+            .pending
+            .as_ref()
+            .is_none_or(|pending| pending.generation != generation)
+        {
+            return Err("generation_gone".into());
+        }
+        let current = document.pending.take().expect("pending generation checked");
+        document.info.size = current.size;
+        document.info.generation = current.generation;
+        document.current = current;
+        document.pending_change = None;
+        Ok(())
     }
 
     pub fn queue(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
@@ -484,15 +551,33 @@ impl Library {
             .collect()
     }
 
-    pub fn reader(&self, id: &str, begin: u64, end: u64) -> Result<Arc<Mutex<File>>, String> {
+    pub fn reader(
+        &self,
+        id: &str,
+        generation: u64,
+        begin: u64,
+        end: u64,
+    ) -> Result<ReadCapability, String> {
         let doc = self
             .documents
             .get(id)
             .ok_or_else(|| "document_closed".to_string())?;
-        if begin >= end || end > doc.info.size || end - begin > MAX_READ {
+        let generation = if doc.current.generation == generation {
+            &doc.current
+        } else {
+            doc.pending
+                .as_ref()
+                .filter(|pending| pending.generation == generation)
+                .ok_or_else(|| "document_changed".to_string())?
+        };
+        if begin >= end || end > generation.size || end - begin > MAX_READ {
             return Err("invalid_range".into());
         }
-        Ok(Arc::clone(&doc.file))
+        Ok(ReadCapability {
+            file: Arc::clone(&generation.file),
+            size: generation.size,
+            modified: generation.modified,
+        })
     }
 
     pub fn document_path(&self, id: &str) -> Result<PathBuf, String> {
@@ -625,8 +710,12 @@ fn timestamp() -> u64 {
         .as_millis() as u64
 }
 
-pub fn read_range(file: Arc<Mutex<File>>, begin: u64, end: u64) -> Result<Vec<u8>, String> {
-    let mut file = file.lock().map_err(|e| e.to_string())?;
+pub fn read_range(capability: ReadCapability, begin: u64, end: u64) -> Result<Vec<u8>, String> {
+    let mut file = capability.file.lock().map_err(|e| e.to_string())?;
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    if metadata.len() != capability.size || metadata.modified().ok() != capability.modified {
+        return Err("document_changed".into());
+    }
     file.seek(SeekFrom::Start(begin))
         .map_err(|e| e.to_string())?;
     let mut buffer = vec![0; (end - begin) as usize];
@@ -652,21 +741,32 @@ mod tests {
         let mut lib = Library::default();
         let info = lib.open(f.path()).unwrap();
         assert_eq!(
-            read_range(lib.reader(&info.id, 0, 5).unwrap(), 0, 5).unwrap(),
+            read_range(lib.reader(&info.id, info.generation, 0, 5).unwrap(), 0, 5).unwrap(),
             b"%PDF-"
         );
-        assert_eq!(lib.reader("unknown", 0, 1).unwrap_err(), "document_closed");
-        assert_eq!(lib.reader(&info.id, 5, 4).unwrap_err(), "invalid_range");
         assert_eq!(
-            lib.reader(&info.id, 0, info.size + 1).unwrap_err(),
+            lib.reader("unknown", 0, 0, 1).unwrap_err(),
+            "document_closed"
+        );
+        assert_eq!(
+            lib.reader(&info.id, info.generation, 5, 4).unwrap_err(),
             "invalid_range"
         );
         assert_eq!(
-            lib.reader(&info.id, 0, MAX_READ + 1).unwrap_err(),
+            lib.reader(&info.id, info.generation, 0, info.size + 1)
+                .unwrap_err(),
+            "invalid_range"
+        );
+        assert_eq!(
+            lib.reader(&info.id, info.generation, 0, MAX_READ + 1)
+                .unwrap_err(),
             "invalid_range"
         );
         lib.close(&info.id);
-        assert_eq!(lib.reader(&info.id, 0, 1).unwrap_err(), "document_closed");
+        assert_eq!(
+            lib.reader(&info.id, info.generation, 0, 1).unwrap_err(),
+            "document_closed"
+        );
     }
 
     #[test]
@@ -876,10 +976,96 @@ mod tests {
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].id, info.id);
         assert_eq!(changed[0].size, 21);
+        assert_eq!(changed[0].generation, info.generation + 1);
 
         fs::write(file.path(), b"not a pdf").unwrap();
         assert!(library.detect_changes().is_empty());
         assert!(library.detect_changes().is_empty());
+    }
+
+    fn replace_atomically(file: &tempfile::NamedTempFile, contents: &[u8]) {
+        let replacement = tempfile::NamedTempFile::new_in(file.path().parent().unwrap()).unwrap();
+        fs::write(replacement.path(), contents).unwrap();
+        let replacement_path = replacement.into_temp_path().keep().unwrap();
+        fs::rename(replacement_path, file.path()).unwrap();
+    }
+
+    #[test]
+    fn atomic_replace_keeps_current_generation_until_commit() {
+        let file = pdf();
+        let mut library = Library::default();
+        let info = library.open(file.path()).unwrap();
+        replace_atomically(&file, b"%PDF-1.7\nreplacement document\n%%EOF");
+        assert!(library.detect_changes().is_empty());
+        let changed = library.detect_changes();
+        assert_eq!(changed.len(), 1);
+        let generation = changed[0].generation;
+
+        assert_eq!(
+            read_range(
+                library.reader(&info.id, info.generation, 9, 15).unwrap(),
+                9,
+                15
+            )
+            .unwrap(),
+            b"fixtur"
+        );
+        library.commit_generation(&info.id, generation).unwrap();
+        assert_eq!(
+            read_range(library.reader(&info.id, generation, 9, 16).unwrap(), 9, 16).unwrap(),
+            b"replace"
+        );
+        assert_eq!(
+            library
+                .reader(&info.id, info.generation, 9, 15)
+                .unwrap_err(),
+            "document_changed"
+        );
+    }
+
+    #[test]
+    fn in_place_overwrite_invalidates_reads_from_the_old_generation() {
+        let file = pdf();
+        let mut library = Library::default();
+        let info = library.open(file.path()).unwrap();
+        let capability = library.reader(&info.id, info.generation, 9, 15).unwrap();
+        fs::write(file.path(), b"%PDF-1.7\nin-place replacement bytes\n%%EOF").unwrap();
+
+        assert_eq!(
+            read_range(capability, 9, 15).unwrap_err(),
+            "document_changed"
+        );
+    }
+
+    #[test]
+    fn uncommitted_change_keeps_current_readable_and_replaces_pending_generation() {
+        let file = pdf();
+        let mut library = Library::default();
+        let info = library.open(file.path()).unwrap();
+        replace_atomically(&file, b"%PDF-1.7\nfirst replacement\n%%EOF");
+        assert!(library.detect_changes().is_empty());
+        let first = library.detect_changes().pop().unwrap();
+
+        replace_atomically(&file, b"%PDF-1.7\nsecond replacement is longer\n%%EOF");
+        assert!(library.detect_changes().is_empty());
+        let second = library.detect_changes().pop().unwrap();
+
+        assert!(second.generation > first.generation);
+        assert_eq!(
+            library
+                .reader(&info.id, first.generation, 9, 14)
+                .unwrap_err(),
+            "document_changed"
+        );
+        assert_eq!(
+            read_range(
+                library.reader(&info.id, info.generation, 9, 15).unwrap(),
+                9,
+                15
+            )
+            .unwrap(),
+            b"fixtur"
+        );
     }
 }
 

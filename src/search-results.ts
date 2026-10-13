@@ -1,8 +1,6 @@
-import { getActiveTab, type ReaderTab } from './state';
+import { getActiveTab, state, type ReaderTab } from './state';
 import { $ } from './dom';
 import { t } from './i18n';
-
-let renderVersion = 0;
 
 export function anchorMatch(text: string, index: number, query: string, matchCase: boolean): number | null {
   if (!query) return null;
@@ -25,10 +23,22 @@ export function anchorMatch(text: string, index: number, query: string, matchCas
   return nearest;
 }
 
-export async function renderSearchResults(tab: ReaderTab = getActiveTab()!) {
+export function searchRenderIsCurrent(
+  version: number,
+  currentVersion: number,
+  mode: string,
+  tab: ReaderTab,
+  activeTab: ReaderTab | undefined,
+) {
+  return version === currentVersion && mode === 'search' && activeTab === tab && !tab.disposed;
+}
+
+function isCurrent(version: number, tab: ReaderTab) {
+  return searchRenderIsCurrent(version, state.sidebarVersion, state.sidebarMode, tab, getActiveTab());
+}
+
+export async function renderSearchResults(tab: ReaderTab, version: number) {
   const content = $('sidebar-content');
-  content.replaceChildren();
-  const version = ++renderVersion;
   if (!tab?.pdf || !tab.query.trim()) return;
   const pages = tab.find.pageMatches ?? [];
   const lengths = tab.find.pageMatchesLength ?? [];
@@ -36,8 +46,10 @@ export async function renderSearchResults(tab: ReaderTab = getActiveTab()!) {
   for (let pageIndex = 0; pageIndex < tab.pdf.numPages; pageIndex++) {
     const matches: number[] = pages[pageIndex] ?? [];
     if (!matches.length) continue;
-    const textContent = await (await tab.pdf.getPage(pageIndex + 1)).getTextContent({ disableNormalization: true });
-    if (version !== renderVersion || tab.disposed) return;
+    const page = await tab.pdf.getPage(pageIndex + 1);
+    if (!isCurrent(version, tab)) return;
+    const textContent = await page.getTextContent({ disableNormalization: true });
+    if (!isCurrent(version, tab)) return;
     const text = textContent.items.map(item => {
       const textItem = item as { str?: string; hasEOL?: boolean };
       return `${textItem.str ?? ''}${textItem.hasEOL ? '\n' : ''}`;
@@ -52,7 +64,9 @@ export async function renderSearchResults(tab: ReaderTab = getActiveTab()!) {
       text,
     });
   }
+  if (!isCurrent(version, tab)) return;
   const count = Math.min(rows.length, 500);
+  const fragment = document.createDocumentFragment();
   for (const result of rows.slice(0, count)) {
     const row = document.createElement('button');
     row.className = 'search-result';
@@ -90,12 +104,14 @@ export async function renderSearchResults(tab: ReaderTab = getActiveTab()!) {
       row.classList.add('active');
       tab.viewer.currentPageNumber = result.page;
     };
-    content.append(row);
+    fragment.append(row);
   }
   if (rows.length > count) {
     const more = document.createElement('p');
     more.className = 'search-results-more';
     more.textContent = t('sidebar.searchMore', { count: rows.length - count });
-    content.append(more);
+    fragment.append(more);
   }
+  if (!isCurrent(version, tab)) return;
+  content.replaceChildren(fragment);
 }

@@ -156,6 +156,7 @@ fn save_position(
 #[tauri::command]
 async fn read_document_range(
     id: String,
+    generation: u64,
     begin: u64,
     end: u64,
     state: State<'_, SharedLibrary>,
@@ -163,12 +164,24 @@ async fn read_document_range(
     let file = state
         .lock()
         .map_err(|e| e.to_string())?
-        .reader(&id, begin, end)?;
+        .reader(&id, generation, begin, end)?;
     let bytes =
         tauri::async_runtime::spawn_blocking(move || documents::read_range(file, begin, end))
             .await
             .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn commit_generation(
+    id: String,
+    generation: u64,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .commit_generation(&id, generation)
 }
 
 #[tauri::command]
@@ -276,6 +289,7 @@ pub fn run() {
             remove_recent,
             save_position,
             read_document_range,
+            commit_generation,
             close_document,
             print_document,
             set_fullscreen

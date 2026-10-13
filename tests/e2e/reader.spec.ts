@@ -274,7 +274,6 @@ test('presentation mode enters with F5 and restores the previous zoom on exit', 
   await expect(page.locator('#app')).not.toHaveClass(/presenting/);
   await expect(page.locator('#zoom')).toHaveValue(before);
 });
-
 test('free-text annotations save as a PDF copy and render when reopened', async ({ page }) => {
   await useJapanese(page);
   await page.goto('/');
@@ -361,4 +360,33 @@ test('modified tabs can cancel or discard the unsaved-changes dialog', async ({ 
   await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
   await page.locator('#unsaved-discard').click();
   await expect(page.getByRole('tab')).toHaveCount(0);
+});
+
+test('presentation mode keeps its temporary view settings out of saved positions on reload', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#zoom').selectOption('1.25');
+  await page.locator('#view-menu-toggle').click();
+  await page.locator('#spread-odd').click();
+  await page.locator('#scroll-vertical').click();
+  await expect.poll(() => page.evaluate(() =>
+    Object.keys(localStorage).find(key => key.startsWith('pdfreader.position:reading-sample.pdf:')),
+  )).toBeTruthy();
+  const positionKey = await page.evaluate(() =>
+    Object.keys(localStorage).find(key => key.startsWith('pdfreader.position:reading-sample.pdf:')),
+  );
+  await expect.poll(async () => {
+    const position = await page.evaluate(key => JSON.parse(localStorage.getItem(key!) || 'null'), positionKey);
+    return [position?.scale, position?.spread, position?.scroll];
+  }).toEqual(['1.25', 1, 0]);
+
+  await page.locator('#view-menu-toggle').click();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('F5');
+  await expect(page.locator('#app')).toHaveClass(/presenting/);
+  await page.reload();
+  const persisted = await page.evaluate(key => JSON.parse(localStorage.getItem(key!) || 'null'), positionKey);
+  expect(persisted).toMatchObject({ scale: '1.25', spread: 1, scroll: 0 });
 });
