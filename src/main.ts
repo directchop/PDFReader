@@ -18,6 +18,27 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 mountIcons();
 initializePrint();
 const passwordDialog = $<HTMLDialogElement>('password-dialog');
+const sidebarPreferencesKey = 'pdfreader.sidebar';
+const sidebar = $('sidebar');
+try {
+  const saved = JSON.parse(localStorage.getItem(sidebarPreferencesKey) ?? 'null') as { open?: unknown; mode?: unknown } | null;
+  if (saved && typeof saved.open === 'boolean') sidebar.hidden = !saved.open;
+  if (saved?.mode === 'pages' || saved?.mode === 'outline') state.sidebarMode = saved.mode;
+} catch {
+}
+button('sidebar-toggle').setAttribute('aria-pressed', String(!sidebar.hidden));
+button('show-pages').classList.toggle('selected', state.sidebarMode === 'pages');
+button('show-outline').classList.toggle('selected', state.sidebarMode === 'outline');
+
+function saveSidebarPreferences() {
+  try {
+    localStorage.setItem(sidebarPreferencesKey, JSON.stringify({
+      open: !sidebar.hidden,
+      mode: state.sidebarMode,
+    }));
+  } catch {
+  }
+}
 
 button('open').onclick = button('welcome-open').onclick = () => run(async () => enqueue(await bridge.openDocuments()));
 document.querySelector('.brand')!.addEventListener('click', event => {
@@ -32,17 +53,20 @@ window.addEventListener('beforeunload', () => {
   for (const tab of tabs) void flushPosition(tab).catch(() => {});
 });
 button('sidebar-toggle').onclick = () => {
-  $('sidebar').hidden = !$('sidebar').hidden;
-  button('sidebar-toggle').setAttribute('aria-pressed', String(!$('sidebar').hidden));
+  sidebar.hidden = !sidebar.hidden;
+  button('sidebar-toggle').setAttribute('aria-pressed', String(!sidebar.hidden));
+  saveSidebarPreferences();
   void renderSidebar();
   window.dispatchEvent(new Event('resize'));
 };
 button('show-pages').onclick = () => {
   state.sidebarMode = 'pages';
+  saveSidebarPreferences();
   void renderSidebar();
 };
 button('show-outline').onclick = () => {
   state.sidebarMode = 'outline';
+  saveSidebarPreferences();
   void renderSidebar();
 };
 button('previous-page').onclick = () => {

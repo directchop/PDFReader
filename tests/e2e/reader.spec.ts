@@ -135,3 +135,24 @@ test('restores browser reading position after reopening a PDF', async ({ page })
   await ready(page, 'long-sample.pdf');
   await expect(page.locator('#page-number')).toHaveValue('20');
 });
+
+test('persists sidebar visibility and mode', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    localStorage.setItem('pdfreader.sidebar', JSON.stringify({ open: false, mode: 'outline' }));
+  });
+  await page.reload();
+  await open(page);
+  await ready(page);
+  await expect(page.locator('#sidebar')).toBeHidden();
+  await expect(page.locator('#show-outline')).toHaveClass(/selected/);
+  await page.locator('#sidebar-toggle').click();
+  await expect(page.locator('#sidebar')).toBeVisible();
+  await page.locator('#show-pages').click();
+  await page.locator('.tab-close').click();
+  await page.reload();
+  await open(page);
+  await ready(page);
+  await expect(page.locator('#sidebar')).toBeVisible();
+  await expect(page.locator('#show-pages')).toHaveClass(/selected/);
+});
