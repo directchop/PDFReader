@@ -11,9 +11,25 @@ import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
 import { refreshFindCount, search } from './find';
+import { presentationBaseline } from './presentation';
 
 let sessionTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressSessionSave = false;
+const changedReadNotices = new Set<string>();
+
+function readErrorCode(error: unknown) {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) return String(error.message);
+  return '';
+}
+
+function notifyChangedRead(tab: ReaderTab, info: bridge.DocumentInfo) {
+  const key = `${tab.info.id}:${info.generation}`;
+  if (changedReadNotices.has(key)) return;
+  changedReadNotices.add(key);
+  notify(t('error.document_changed', { name: info.name }));
+}
 
 function scheduleSessionSave() {
   if (suppressSessionSave) return;
@@ -34,11 +50,9 @@ export async function flushSession() {
 }
 
 function schedulePositionSave(tab: ReaderTab) {
-  if (document.getElementById('app')?.classList.contains('presenting')) return;
   if (tab.positionTimer) clearTimeout(tab.positionTimer);
   tab.positionTimer = setTimeout(() => {
     tab.positionTimer = undefined;
-    if (document.getElementById('app')?.classList.contains('presenting')) return;
     void flushPosition(tab).catch(error => notify(message(error)));
   }, 800);
 }
@@ -83,14 +97,15 @@ export async function flushPosition(tab: ReaderTab) {
   if (tab.positionTimer) clearTimeout(tab.positionTimer);
   tab.positionTimer = undefined;
   if (!tab.pdf || tab.disposed) return;
-  const scale = tab.viewer.currentScaleValue || 'auto';
+  const baseline = presentationBaseline(tab);
+  const scale = baseline?.scale ?? (tab.viewer.currentScaleValue || 'auto');
   const position: ReadingPosition = {
     page: tab.viewer.currentPageNumber,
     pages: tab.pdf.numPages,
     scale,
     rotation: tab.viewer.pagesRotation,
-    spread: tab.viewer.spreadMode,
-    scroll: tab.viewer.scrollMode,
+    spread: baseline?.spread ?? tab.viewer.spreadMode,
+    scroll: baseline?.scroll ?? tab.viewer.scrollMode,
   };
   try {
     await bridge.savePosition(tab.info.id, position);
@@ -214,7 +229,13 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   };
   tabs.push(tab);
   activate(tab);
+  let changedReadFailure = false;
   const load = loadPdf(info, tab, error => {
+    if (readErrorCode(error) === 'document_changed') {
+      changedReadFailure = true;
+      notifyChangedRead(tab, info);
+      return;
+    }
     notify(message(error));
     run(() => closeTab(tab));
   });
@@ -297,6 +318,10 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     }
   } catch (error) {
     if (!tab.disposed) {
+      if (changedReadFailure || readErrorCode(error) === 'document_changed') {
+        if (!changedReadFailure) notifyChangedRead(tab, info);
+        return;
+      }
       notify(`${info.name}: ${t('error.open_pdf')} ${message(error)}`);
       await closeTab(tab);
     }
@@ -316,20 +341,37 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
   };
   const reloadedInfo = { ...info, position };
   let loadReady = false;
+  let changedReadFailure = false;
   const load = loadPdf(reloadedInfo, tab, error => {
-    if (loadReady) notify(message(error));
+    if (readErrorCode(error) === 'document_changed') {
+      changedReadFailure = true;
+      notifyChangedRead(tab, info);
+    } else if (loadReady) notify(message(error));
   });
   let loaded: Awaited<typeof load.loaded>;
   let bookmarks: bridge.Bookmark[];
   try {
     loaded = await load.loaded;
     bookmarks = await bridge.bookmarks(reloadedInfo).catch(() => []);
-  } catch {
+  } catch (error) {
     await load.task.destroy().catch(() => {});
-    notify(t('reload.failed', { name: info.name }));
+    if (changedReadFailure || readErrorCode(error) === 'document_changed') {
+      if (!changedReadFailure) notifyChangedRead(tab, info);
+    } else {
+      notify(t('reload.failed', { name: info.name }));
+    }
     return undefined;
   }
   const oldTask = tab.task;
+  const oldState = {
+    info: tab.info,
+    pdf: tab.pdf,
+    task: tab.task,
+    canPrint: tab.canPrint,
+    outline: tab.outline,
+    bookmarks: tab.bookmarks,
+    rendered: tab.rendered,
+  };
   tab.links.setDocument(loaded.pdf);
   tab.viewer.setDocument(loaded.pdf);
   tab.info = reloadedInfo;
@@ -339,6 +381,22 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
   tab.outline = loaded.outline;
   tab.bookmarks = bookmarks;
   tab.rendered = false;
+  try {
+    await bridge.commitGeneration(info.id, info.generation);
+  } catch {
+    tab.links.setDocument(oldState.pdf!);
+    tab.viewer.setDocument(oldState.pdf!);
+    tab.info = oldState.info;
+    tab.pdf = oldState.pdf;
+    tab.task = oldState.task;
+    tab.canPrint = oldState.canPrint;
+    tab.outline = oldState.outline;
+    tab.bookmarks = oldState.bookmarks;
+    tab.rendered = oldState.rendered;
+    await load.task.destroy().catch(() => {});
+    notify(t('reload.failed', { name: info.name }));
+    return undefined;
+  }
   loadReady = true;
   await oldTask.destroy().catch(() => {});
   if (getActiveTab() === tab) {

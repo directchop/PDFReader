@@ -76,7 +76,7 @@ export async function renderSidebar() {
     return;
   }
   if (state.sidebarMode === 'search') {
-    await renderSearchResults(tab);
+    await renderSearchResults(tab, version);
     return;
   }
   if (state.sidebarMode === 'outline') {
