@@ -3,5 +3,9 @@
   "identifier": "main",
   "description": "Local reader window; no shell or general filesystem access.",
   "windows": ["main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-is-fullscreen"
+  ]
 }
