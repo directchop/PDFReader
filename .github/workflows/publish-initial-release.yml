@@ -1,0 +1,309 @@
+name: Publish initial v0.1.0 preview
+
+on:
+  push:
+    branches: [codex/release-v0.1.0]
+    paths: [.github/workflows/publish-initial-release.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-v0.1.0
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: v0.1.0
+  RELEASE_SHA: c6cf650ec370f71d45d1a370931ed0c231dabb22
+  RELEASE_NOTES: |
+    PDFReader の初回プレビュー版です。Windows / macOS で、ローカルの PDF を閲覧・検索・印刷できます。
+    
+    ## ダウンロード
+    - Windows x64: `.exe` インストーラー
+    - macOS 13.3 以降（Intel / Apple Silicon）: `universal.dmg`
+    - `SHA256SUMS.txt`: 配布ファイルの確認用ハッシュ
+    
+    ## 主な機能
+    - 複数タブ、日本語全文検索、サムネイル・目次、しおり、見開き表示、プレゼンテーション
+    - 閲覧位置と前回のタブの復元、最近使ったファイル、日本語 / English、ライト / ダークテーマ
+    - ハイライト・テキスト・手書き注釈、AcroForm 入力、変更内容の別名保存
+    - 保存失敗・キャンセル・保存中の追加入力・入力途中の注釈を保護
+    - 範囲指定印刷と OS の PDF 関連付け（既定アプリは OS の設定から選択）
+    - Rust + Tauri 2 とローカル同梱の PDF.js。PDF のクラウド送信やテレメトリは行いません
+    
+    ## 検証
+    - Vitest 34 件、Playwright 21 件、Rust テスト 18 件、ビルドと Clippy が成功
+    - Windows の実 Rust / WebView2 アプリで注釈保存と終了時の未保存内容保護を確認
+    - Windows x64 / macOS Universal の CI ビルドが成功
+    - 公開対象: main の `c6cf650ec370f71d45d1a370931ed0c231dabb22`
+    
+    ## プレビュー版の制限
+    - OCR、電子署名検証、XFA、PDF の結合・ページ構成変更は未対応です
+    - 最大 12 タブ・1 PDF 1 GiB。印刷は画像方式、最大 150 dpi・1 回 100 ページです
+    - macOS 実機の UI と物理プリンターでの互換性、実際の更新インストールは未検証です
+    - コード署名・Apple 公証は未設定です。インストール時に OS の警告が表示される場合があります
+    - アプリ内更新は署名鍵を設定したビルドでのみ有効になります
+    
+    詳細は [README](https://github.com/directchop/PDFReader/blob/v0.1.0/README.md) と [リリースガイド](https://github.com/directchop/PDFReader/blob/v0.1.0/docs/RELEASING.md) を参照してください。
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create annotated tag at the verified main commit
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repo = context.repo;
+            const tag = process.env.RELEASE_TAG;
+            const sha = process.env.RELEASE_SHA;
+            const { data: main } = await github.rest.git.getRef({ ...repo, ref: 'heads/main' });
+            if (main.object.sha !== sha) throw new Error('main changed; review before releasing');
+            const releases = await github.paginate(github.rest.repos.listReleases, repo);
+            if (releases.some(r => r.tag_name === tag && !r.draft)) {
+              throw new Error('This version is already published; refusing to rebuild it');
+            }
+            let ref;
+            try {
+              ({ data: ref } = await github.rest.git.getRef({ ...repo, ref: 'tags/' + tag }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (ref) {
+              let object = ref.object;
+              while (object.type === 'tag') {
+                const { data } = await github.rest.git.getTag({ ...repo, tag_sha: object.sha });
+                object = data.object;
+              }
+              if (object.type !== 'commit' || object.sha !== sha) {
+                throw new Error('Existing tag points elsewhere; refusing to move it');
+              }
+            } else {
+              const { data: annotated } = await github.rest.git.createTag({
+                ...repo, tag, message: process.env.RELEASE_NOTES,
+                object: sha, type: 'commit',
+                tagger: { name: 'github-actions[bot]', email: '41898282+github-actions[bot]@users.noreply.github.com', date: new Date().toISOString() }
+              });
+              await github.rest.git.createRef({ ...repo, ref: 'refs/tags/' + tag, sha: annotated.sha });
+            }
+            core.info('Verified release tag ' + tag + ' at ' + sha);
+
+  release:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x64
+          - os: macos-latest
+            target: universal-apple-darwin
+            name: macos-universal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v0.1.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validate release tag version
+        shell: bash
+        env:
+          RELEASE_TAG: v0.1.0
+        run: node scripts/release-metadata.mjs check-version "$RELEASE_TAG"
+      - name: Read release notes from tag
+        id: release-notes
+        shell: bash
+        env:
+          RELEASE_TAG: v0.1.0
+        run: node scripts/release-metadata.mjs release-notes "$RELEASE_TAG"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install Mac targets
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Configure optional signing secrets
+        id: signing
+        shell: bash
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          export_secret() {
+            local name="$1"
+            local value="$2"
+            local delimiter="PDFREADER_${RANDOM}_${RANDOM}_END"
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_ENV"
+          }
+
+          has_updater_signing=false
+          if [[ -n "$UPDATER_PRIVATE_KEY" && -n "$UPDATER_PUBLIC_KEY" ]]; then
+            has_updater_signing=true
+            export_secret TAURI_SIGNING_PRIVATE_KEY "$UPDATER_PRIVATE_KEY"
+            export_secret PDFREADER_UPDATER_PUBKEY "$UPDATER_PUBLIC_KEY"
+            if [[ -n "$UPDATER_PRIVATE_KEY_PASSWORD" ]]; then
+              export_secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$UPDATER_PRIVATE_KEY_PASSWORD"
+            fi
+          fi
+          echo "has_updater_signing=$has_updater_signing" >> "$GITHUB_OUTPUT"
+
+          has_windows_signing=false
+          if [[ -n "$WINDOWS_CERTIFICATE" && -n "$WINDOWS_CERTIFICATE_PASSWORD" ]]; then
+            has_windows_signing=true
+          fi
+          echo "has_windows_signing=$has_windows_signing" >> "$GITHUB_OUTPUT"
+
+          has_apple_signing=false
+          if [[ "$RUNNER_OS" == "macOS" \
+            && -n "$APPLE_CERTIFICATE_SECRET" \
+            && -n "$APPLE_CERTIFICATE_PASSWORD_SECRET" \
+            && -n "$APPLE_SIGNING_IDENTITY_SECRET" \
+            && -n "$APPLE_ID_SECRET" \
+            && -n "$APPLE_PASSWORD_SECRET" \
+            && -n "$APPLE_TEAM_ID_SECRET" ]]; then
+            has_apple_signing=true
+            export_secret APPLE_CERTIFICATE "$APPLE_CERTIFICATE_SECRET"
+            export_secret APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD_SECRET"
+            export_secret APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY_SECRET"
+            export_secret APPLE_ID "$APPLE_ID_SECRET"
+            export_secret APPLE_PASSWORD "$APPLE_PASSWORD_SECRET"
+            export_secret APPLE_TEAM_ID "$APPLE_TEAM_ID_SECRET"
+          fi
+          echo "has_apple_signing=$has_apple_signing" >> "$GITHUB_OUTPUT"
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows' && steps.signing.outputs.has_windows_signing == 'true'
+        id: windows-certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'pdfreader-signing.pfx'
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificates = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item -LiteralPath $pfxPath -Force
+          $certificate = $certificates | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+          if (-not $certificate) { throw 'The imported PFX has no certificate with a private key.' }
+          $thumbprint = $certificate.Thumbprint
+          Write-Output "Imported signing certificate: $thumbprint"
+          "thumbprint=$thumbprint" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Create Tauri release configuration
+        id: release-config
+        shell: bash
+        env:
+          HAS_UPDATER_SIGNING: ${{ steps.signing.outputs.has_updater_signing }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.windows-certificate.outputs.thumbprint }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const config = { bundle: {} };
+          if (process.env.HAS_UPDATER_SIGNING === 'true') {
+            config.bundle.createUpdaterArtifacts = true;
+          }
+          if (process.env.WINDOWS_CERTIFICATE_THUMBPRINT) {
+            config.bundle.windows = {
+              certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
+              digestAlgorithm: 'sha256',
+              timestampUrl: 'http://timestamp.digicert.com',
+            };
+          }
+          const configPath = path.join(process.env.RUNNER_TEMP, 'pdfreader-release-config.json');
+          fs.writeFileSync(configPath, JSON.stringify(config));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `path=${configPath}${require('node:os').EOL}`);
+          NODE
+      - name: Build and create draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v0.1.0
+          releaseName: v0.1.0 — Preview
+          releaseBody: ${{ steps.release-notes.outputs.body }}
+          releaseDraft: true
+          prerelease: true
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }} --config ${{ steps.release-config.outputs.path }}
+
+
+  publish:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify assets, upload checksums, and publish preview
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const crypto = require('node:crypto');
+            const repo = context.repo;
+            const tag = process.env.RELEASE_TAG;
+            const releases = await github.paginate(github.rest.repos.listReleases, repo);
+            const release = releases.find(r => r.tag_name === tag);
+            if (!release || !release.draft) throw new Error('Expected one draft release');
+            const { data: ref } = await github.rest.git.getRef({ ...repo, ref: 'tags/' + tag });
+            let object = ref.object;
+            while (object.type === 'tag') {
+              const { data } = await github.rest.git.getTag({ ...repo, tag_sha: object.sha });
+              object = data.object;
+            }
+            if (object.type !== 'commit' || object.sha !== process.env.RELEASE_SHA) {
+              throw new Error('Tag changed before publication');
+            }
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id: release.id });
+            const payloads = assets.filter(a => a.name !== 'SHA256SUMS.txt');
+            if (!payloads.some(a => /^PDFReader_0\.1\.0_.*x64.*\.exe$/.test(a.name))) throw new Error('Windows installer missing');
+            if (!payloads.some(a => /^PDFReader_0\.1\.0_.*universal.*\.dmg$/.test(a.name))) throw new Error('Universal Mac installer missing');
+            const checksums = [];
+            for (const asset of payloads) {
+              if (asset.state !== 'uploaded' || asset.size <= 0) throw new Error('Incomplete asset: ' + asset.name);
+              const response = await fetch(asset.url, {
+                headers: { Authorization: 'Bearer ' + process.env.GITHUB_TOKEN, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' }
+              });
+              if (!response.ok) throw new Error('Asset download failed: ' + asset.name + ' ' + response.status);
+              const bytes = Buffer.from(await response.arrayBuffer());
+              if (bytes.length !== asset.size) throw new Error('Asset length mismatch: ' + asset.name);
+              if (asset.name.endsWith('.exe') && bytes.subarray(0, 2).toString() !== 'MZ') throw new Error('Invalid executable');
+              if (asset.name.endsWith('.dmg') && bytes.subarray(bytes.length - 512, bytes.length - 508).toString() !== 'koly') throw new Error('Invalid DMG');
+              const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+              if (asset.digest && asset.digest !== 'sha256:' + hash) throw new Error('Digest mismatch: ' + asset.name);
+              checksums.push(hash + '  ' + asset.name);
+              core.info('Verified ' + asset.name + ' (' + bytes.length + ' bytes)');
+            }
+            const checksumBytes = Buffer.from(checksums.sort().join('\n') + '\n', 'utf8');
+            const previous = assets.find(a => a.name === 'SHA256SUMS.txt');
+            if (previous) await github.rest.repos.deleteReleaseAsset({ ...repo, asset_id: previous.id });
+            await github.rest.repos.uploadReleaseAsset({
+              ...repo, release_id: release.id, name: 'SHA256SUMS.txt', data: checksumBytes,
+              headers: { 'content-type': 'text/plain', 'content-length': checksumBytes.length }
+            });
+            const { data: published } = await github.rest.repos.updateRelease({
+              ...repo, release_id: release.id, draft: false, prerelease: true, make_latest: 'false',
+              name: tag + ' — Preview', body: process.env.RELEASE_NOTES
+            });
+            core.info('Published ' + published.html_url);
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
