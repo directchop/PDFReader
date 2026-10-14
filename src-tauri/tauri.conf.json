@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PDFReader",
+  "version": "0.1.0",
+  "identifier": "io.github.directchop.pdfreader",
+  "build": {
+    "beforeDevCommand": "npm run web:dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "create": false,
+      "title": "PDFReader",
+      "width": 1280,
+      "height": 860,
+      "minWidth": 820,
+      "minHeight": 560,
+      "center": true,
+      "dragDropEnabled": true
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/directchop/PDFReader/releases/latest/download/latest.json"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "dmg", "app"],
+    "category": "Productivity",
+    "shortDescription": "A quiet space for your PDFs",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "fileAssociations": [{ "ext": ["pdf"], "mimeType": "application/pdf", "description": "PDF document", "role": "Viewer" }],
+    "macOS": { "minimumSystemVersion": "13.3" },
+    "windows": { "nsis": { "languages": ["Japanese", "English"], "displayLanguageSelector": true } }
+  }
+}

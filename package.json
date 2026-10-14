@@ -1,0 +1,32 @@
+{
+  "name": "pdfreader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local-first PDF reader for Windows and macOS, built with Rust and Tauri.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "node scripts/tauri.mjs dev",
+    "web:dev": "node scripts/pdf-assets.mjs && vite --host 127.0.0.1",
+    "build": "node scripts/pdf-assets.mjs && tsc --noEmit && vite build",
+    "desktop:build": "node scripts/tauri.mjs build",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:native": "node scripts/native-smoke.mjs",
+    "tauri": "node scripts/tauri.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.3",
+    "pdfjs-dist": "6.4.299"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@tauri-apps/cli": "2.12.2",
+    "@types/node": "^22.19.0",
+    "typescript": "~5.9.3",
+    "vite": "8.3.4",
+    "vitest": "^4.0.0"
+  },
+  "engines": { "node": ">=22.13.0" }
+}

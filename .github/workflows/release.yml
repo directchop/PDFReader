@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to release, for example v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x64
+          - os: macos-latest
+            target: universal-apple-darwin
+            name: macos-universal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validate release tag version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: node scripts/release-metadata.mjs check-version "$RELEASE_TAG"
+      - name: Read release notes from tag
+        id: release-notes
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: node scripts/release-metadata.mjs release-notes "$RELEASE_TAG"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install Mac targets
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Configure optional signing secrets
+        id: signing
+        shell: bash
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          export_secret() {
+            local name="$1"
+            local value="$2"
+            local delimiter="PDFREADER_${RANDOM}_${RANDOM}_END"
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_ENV"
+          }
+
+          has_updater_signing=false
+          if [[ -n "$UPDATER_PRIVATE_KEY" && -n "$UPDATER_PUBLIC_KEY" ]]; then
+            has_updater_signing=true
+            export_secret TAURI_SIGNING_PRIVATE_KEY "$UPDATER_PRIVATE_KEY"
+            export_secret PDFREADER_UPDATER_PUBKEY "$UPDATER_PUBLIC_KEY"
+            if [[ -n "$UPDATER_PRIVATE_KEY_PASSWORD" ]]; then
+              export_secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$UPDATER_PRIVATE_KEY_PASSWORD"
+            fi
+          fi
+          echo "has_updater_signing=$has_updater_signing" >> "$GITHUB_OUTPUT"
+
+          has_windows_signing=false
+          if [[ -n "$WINDOWS_CERTIFICATE" && -n "$WINDOWS_CERTIFICATE_PASSWORD" ]]; then
+            has_windows_signing=true
+          fi
+          echo "has_windows_signing=$has_windows_signing" >> "$GITHUB_OUTPUT"
+
+          has_apple_signing=false
+          if [[ "$RUNNER_OS" == "macOS" \
+            && -n "$APPLE_CERTIFICATE_SECRET" \
+            && -n "$APPLE_CERTIFICATE_PASSWORD_SECRET" \
+            && -n "$APPLE_SIGNING_IDENTITY_SECRET" \
+            && -n "$APPLE_ID_SECRET" \
+            && -n "$APPLE_PASSWORD_SECRET" \
+            && -n "$APPLE_TEAM_ID_SECRET" ]]; then
+            has_apple_signing=true
+            export_secret APPLE_CERTIFICATE "$APPLE_CERTIFICATE_SECRET"
+            export_secret APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD_SECRET"
+            export_secret APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY_SECRET"
+            export_secret APPLE_ID "$APPLE_ID_SECRET"
+            export_secret APPLE_PASSWORD "$APPLE_PASSWORD_SECRET"
+            export_secret APPLE_TEAM_ID "$APPLE_TEAM_ID_SECRET"
+          fi
+          echo "has_apple_signing=$has_apple_signing" >> "$GITHUB_OUTPUT"
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows' && steps.signing.outputs.has_windows_signing == 'true'
+        id: windows-certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'pdfreader-signing.pfx'
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificates = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item -LiteralPath $pfxPath -Force
+          $certificate = $certificates | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+          if (-not $certificate) { throw 'The imported PFX has no certificate with a private key.' }
+          $thumbprint = $certificate.Thumbprint
+          Write-Output "Imported signing certificate: $thumbprint"
+          "thumbprint=$thumbprint" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Create Tauri release configuration
+        id: release-config
+        shell: bash
+        env:
+          HAS_UPDATER_SIGNING: ${{ steps.signing.outputs.has_updater_signing }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.windows-certificate.outputs.thumbprint }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const config = { bundle: {} };
+          if (process.env.HAS_UPDATER_SIGNING === 'true') {
+            config.bundle.createUpdaterArtifacts = true;
+          }
+          if (process.env.WINDOWS_CERTIFICATE_THUMBPRINT) {
+            config.bundle.windows = {
+              certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
+              digestAlgorithm: 'sha256',
+              timestampUrl: 'http://timestamp.digicert.com',
+            };
+          }
+          const configPath = path.join(process.env.RUNNER_TEMP, 'pdfreader-release-config.json');
+          fs.writeFileSync(configPath, JSON.stringify(config));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `path=${configPath}${require('node:os').EOL}`);
+          NODE
+      - name: Build and create draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          releaseName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          releaseBody: ${{ steps.release-notes.outputs.body }}
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }} --config ${{ steps.release-config.outputs.path }}
