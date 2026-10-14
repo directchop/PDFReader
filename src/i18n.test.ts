@@ -19,3 +19,14 @@ describe('Save As error translations', () => {
     }
   });
 });
+
+describe('updater error translations', () => {
+  afterEach(() => setLocale('en'));
+
+  it.each(['ja', 'en'] as const)('localizes updater errors in %s', locale => {
+    setLocale(locale);
+    for (const code of ['updater_unavailable', 'update_failed']) {
+      expect(describeError(code)).not.toBe(code);
+    }
+  });
+});

@@ -1,5 +1,6 @@
 import { applyTranslations, getLocaleChoice, setLocale } from './i18n';
 import { desktop } from './bridge';
+import { initializeUpdateSettings } from './updates';
 
 export type ThemeChoice = 'system' | 'light' | 'dark';
 
@@ -71,6 +72,7 @@ function setupSettingsMenu() {
   autoReload.addEventListener('change', () => {
     localStorage.setItem('pdfreader.autoReload', String(autoReload.checked));
   });
+  void initializeUpdateSettings();
 }
 
 applyTheme();
