@@ -17,6 +17,8 @@ export function refreshToolbar() {
   button('next-page').disabled = !pdf || viewer.currentPageNumber >= pdf.numPages;
   for (const id of ['zoom-in', 'zoom-out', 'rotate', 'find-toggle']) button(id).disabled = !pdf;
   button('print').disabled = !pdf || !tab.canPrint;
+  button('bookmark-toggle').disabled = !pdf;
+  button('bookmark-toggle').setAttribute('aria-pressed', String(!!pdf && tab.bookmarks.some(bookmark => bookmark.page === viewer.currentPageNumber)));
   $('document-status').textContent = tab.rendered ? info.name : t('status.loading');
   $('document-details').textContent = pdf ? `${pdf.numPages} ${t('status.pages')} · ${sizeLabel(info.size)}` : sizeLabel(info.size);
   const zoom = $<HTMLSelectElement>('zoom');

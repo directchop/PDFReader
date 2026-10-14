@@ -1,6 +1,8 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import type { DocumentInfo } from './bridge';
+import type { Bookmark } from './bridge';
+import type { AnnotationEditorUIManager } from 'pdfjs-dist/types/src/display/editor/tools';
 
 export interface ReaderTab {
   info: DocumentInfo;
@@ -12,6 +14,15 @@ export interface ReaderTab {
   find: PDFFindController;
   task: PDFDocumentLoadingTask;
   pdf?: PDFDocumentProxy;
+  bookmarks: Bookmark[];
+  modified: boolean;
+  savedAnnotationHash: string;
+  annotationEditor?: Pick<AnnotationEditorUIManager, 'endCurrentEditing'>;
+  saving?: Promise<boolean>;
+  annotationMode: number;
+  annotationColors: { highlight: string; text: string; ink: string };
+  annotationThickness: number;
+  annotationFontSize: number;
   outline?: Awaited<ReturnType<PDFDocumentProxy['getOutline']>>;
   disposed: boolean;
   query: string;
@@ -39,7 +50,7 @@ export function setActiveTab(tab?: ReaderTab) {
 }
 
 export const state = {
-  sidebarMode: 'pages' as 'pages' | 'outline',
+  sidebarMode: 'pages' as 'pages' | 'outline' | 'bookmarks' | 'search',
   thumbnailObserver: undefined as IntersectionObserver | undefined,
   thumbnailGroup: -1,
   sidebarVersion: 0,

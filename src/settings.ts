@@ -1,4 +1,5 @@
 import { applyTranslations, getLocaleChoice, setLocale } from './i18n';
+import { desktop } from './bridge';
 
 export type ThemeChoice = 'system' | 'light' | 'dark';
 
@@ -31,6 +32,9 @@ function setupSettingsMenu() {
   const toggle = document.getElementById('settings-toggle') as HTMLButtonElement;
   const menu = document.getElementById('settings-menu') as HTMLDivElement;
   const invert = document.getElementById('invert-pages') as HTMLInputElement;
+  const restoreSession = document.getElementById('restore-session') as HTMLInputElement;
+  const autoReload = document.getElementById('auto-reload') as HTMLInputElement;
+  document.getElementById('auto-reload-row')!.hidden = !desktop;
   const localeSelect = document.getElementById('locale-select') as HTMLSelectElement;
   localeSelect.value = getLocaleChoice();
   localeSelect.addEventListener('change', () => setLocale(localeSelect.value as 'auto' | 'ja' | 'en'));
@@ -58,6 +62,14 @@ function setupSettingsMenu() {
   invert.addEventListener('change', () => {
     localStorage.setItem(INVERT_KEY, String(invert.checked));
     applyTheme();
+  });
+  restoreSession.checked = localStorage.getItem('pdfreader.restoreSession') !== 'false';
+  restoreSession.addEventListener('change', () => {
+    localStorage.setItem('pdfreader.restoreSession', String(restoreSession.checked));
+  });
+  autoReload.checked = localStorage.getItem('pdfreader.autoReload') !== 'false';
+  autoReload.addEventListener('change', () => {
+    localStorage.setItem('pdfreader.autoReload', String(autoReload.checked));
   });
 }
 

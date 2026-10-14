@@ -4,6 +4,10 @@ import { isPrintBusy, showPrint } from './print';
 import { getActiveTab, tabs } from './state';
 import { closeTab, activate } from './tabs';
 import { setScale, zoomBy } from './toolbar';
+import { toggleCurrentBookmark } from './bookmarks';
+import { enterPresentation, exitPresentation } from './presentation';
+import { AnnotationEditorType } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { closeAnnotationBar, saveAsCopy, setAnnotationMode, toggleAnnotationBar } from './annotations';
 
 export function registerShortcuts() {
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -22,7 +26,41 @@ export function registerShortcuts() {
     const mod = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
     const active = getActiveTab();
+    if ($('app').classList.contains('presenting')) {
+      if (event.key === 'Escape' || event.key === 'F5') {
+        event.preventDefault();
+        run(() => exitPresentation());
+      } else if (['ArrowRight', 'ArrowDown', ' ', 'PageDown', 'Enter'].includes(event.key)) {
+        event.preventDefault();
+        active?.viewer.nextPage();
+      } else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(event.key)) {
+        event.preventDefault();
+        active?.viewer.previousPage();
+      } else if (event.key === 'Home' && active?.pdf) {
+        event.preventDefault();
+        active.viewer.currentPageNumber = 1;
+      } else if (event.key === 'End' && active?.pdf) {
+        event.preventDefault();
+        active.viewer.currentPageNumber = active.pdf.numPages;
+      }
+      return;
+    }
     const target = event.target;
+    if (mod && key === 's' && active?.pdf) {
+      event.preventDefault();
+      run(() => saveAsCopy(active));
+      return;
+    }
+    const annotationOrFormFocus = target instanceof Element && !!target.closest(
+      '.annotationEditorLayer, .freeTextEditor, .inkEditor, .annotationLayer input, .annotationLayer textarea, .annotationLayer select, .annotationLayer [contenteditable="true"]',
+    );
+    if (annotationOrFormFocus) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAnnotationBar();
+      }
+      return;
+    }
     const editing = target instanceof Element && !!target.closest('input, select, textarea, [contenteditable="true"]');
 
     if (mac && event.ctrlKey && event.metaKey && key === 'f' && !editing) {
@@ -37,6 +75,9 @@ export function registerShortcuts() {
     } else if (mod && key === 'p') {
       event.preventDefault();
       showPrint();
+    } else if (mod && key === 'd' && active?.pdf) {
+      event.preventDefault();
+      run(() => toggleCurrentBookmark());
     } else if (mod && key === 'w' && active) {
       event.preventDefault();
       run(() => closeTab(active));
@@ -62,6 +103,19 @@ export function registerShortcuts() {
       }
     } else if (editing) {
       return;
+    } else if (event.key === 'F5') {
+      event.preventDefault();
+      run(() => enterPresentation());
+    } else if (!mod && active?.pdf && ['v', 'h', 't', 'i'].includes(key)) {
+      event.preventDefault();
+      if ($('annotationbar').hidden) toggleAnnotationBar();
+      const modes: Record<string, number> = {
+        v: AnnotationEditorType.NONE,
+        h: AnnotationEditorType.HIGHLIGHT,
+        t: AnnotationEditorType.FREETEXT,
+        i: AnnotationEditorType.INK,
+      };
+      setAnnotationMode(modes[key]);
     } else if (event.key === 'ArrowLeft' && active?.pdf) {
       event.preventDefault();
       active.viewer.previousPage();

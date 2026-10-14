@@ -1,10 +1,15 @@
 mod documents;
 
-use documents::{DocumentInfo, Library, OpenBatch, ReadingPosition, RecentFileView};
-use std::{path::PathBuf, sync::Mutex};
+use documents::{Bookmark, DocumentInfo, Library, OpenBatch, ReadingPosition, RecentFileView};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 use tauri::{Emitter, Manager, State};
 
-type SharedLibrary = Mutex<Library>;
+type SharedLibrary = Arc<Mutex<Library>>;
 
 #[tauri::command]
 async fn open_documents(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
@@ -20,10 +25,90 @@ async fn open_documents(state: State<'_, SharedLibrary>) -> Result<OpenBatch, St
 }
 
 #[tauri::command]
+async fn pick_save_path(
+    id: String,
+    suggested_name: String,
+    state: State<'_, SharedLibrary>,
+) -> Result<Option<String>, String> {
+    let source = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .document_path(&id)?;
+    let directory = source.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .add_filter("PDF", &["pdf"])
+        .set_directory(directory)
+        .set_file_name(suggested_name)
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let token = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .issue_save_token(&id, file.path())?;
+    Ok(Some(token))
+}
+
+#[tauri::command]
+fn write_saved_copy(
+    request: tauri::ipc::Request<'_>,
+    state: State<'_, SharedLibrary>,
+) -> Result<String, String> {
+    let token = request
+        .headers()
+        .get("x-save-token")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| "invalid_save_token".to_string())?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("invalid_save_token".into());
+    };
+    state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .write_saved_copy(token, bytes)
+}
+
+#[tauri::command]
 fn take_pending(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
     Ok(std::mem::take(
         &mut state.lock().map_err(|e| e.to_string())?.pending,
     ))
+}
+
+#[tauri::command]
+fn save_session(
+    ids: Vec<String>,
+    active: Option<String>,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_session(&ids, active.as_deref())
+}
+
+#[tauri::command]
+fn restore_session(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
+    Ok(state.lock().map_err(|e| e.to_string())?.restore_session())
+}
+
+#[tauri::command]
+fn bookmarks(id: String, state: State<'_, SharedLibrary>) -> Result<Vec<Bookmark>, String> {
+    state.lock().map_err(|e| e.to_string())?.bookmarks(&id)
+}
+
+#[tauri::command]
+fn save_bookmarks(
+    id: String,
+    bookmarks: Vec<Bookmark>,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_bookmarks(&id, bookmarks)
 }
 
 #[tauri::command]
@@ -71,6 +156,7 @@ fn save_position(
 #[tauri::command]
 async fn read_document_range(
     id: String,
+    generation: u64,
     begin: u64,
     end: u64,
     state: State<'_, SharedLibrary>,
@@ -78,12 +164,24 @@ async fn read_document_range(
     let file = state
         .lock()
         .map_err(|e| e.to_string())?
-        .reader(&id, begin, end)?;
+        .reader(&id, generation, begin, end)?;
     let bytes =
         tauri::async_runtime::spawn_blocking(move || documents::read_range(file, begin, end))
             .await
             .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn commit_generation(
+    id: String,
+    generation: u64,
+    state: State<'_, SharedLibrary>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .commit_generation(&id, generation)
 }
 
 #[tauri::command]
@@ -135,7 +233,22 @@ pub fn run() {
                     .filter(|p| !p.to_string_lossy().starts_with('-'))
                     .map(PathBuf::from),
             );
-            app.manage(Mutex::new(library));
+            app.manage(Arc::new(Mutex::new(library)));
+            let library = app.state::<SharedLibrary>().inner().clone();
+            let handle = app.handle().clone();
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_millis(1500));
+                let changed = match library.lock() {
+                    Ok(mut library) => library.detect_changes(),
+                    Err(error) => {
+                        eprintln!("Could not check open files: {error}");
+                        continue;
+                    }
+                };
+                for info in changed {
+                    let _ = handle.emit("document-changed", info);
+                }
+            });
             let config = app
                 .config()
                 .app
@@ -163,13 +276,20 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_documents,
+            pick_save_path,
+            write_saved_copy,
             take_pending,
+            save_session,
+            restore_session,
+            bookmarks,
+            save_bookmarks,
             recent_documents,
             reopen_recent,
             clear_recent,
             remove_recent,
             save_position,
             read_document_range,
+            commit_generation,
             close_document,
             print_document,
             set_fullscreen

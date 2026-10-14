@@ -1,11 +1,15 @@
 import { expect, test, type Page } from '@playwright/test';
 import path from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 
 const fixture = (name: string) => path.resolve('tests/fixtures', name);
-async function open(page: Page, names = ['reading-sample.pdf']) {
+async function openPaths(page: Page, files: string[]) {
   const chooser = page.waitForEvent('filechooser');
   await page.locator('#open').click();
-  await (await chooser).setFiles(names.map(fixture));
+  await (await chooser).setFiles(files);
+}
+async function open(page: Page, names = ['reading-sample.pdf']) {
+  await openPaths(page, names.map(fixture));
 }
 async function ready(page: Page, name = 'reading-sample.pdf') {
   await expect(page.locator('#document-status')).toHaveText(name);
@@ -14,6 +18,16 @@ async function ready(page: Page, name = 'reading-sample.pdf') {
 
 async function useJapanese(page: Page) {
   await page.addInitScript(() => localStorage.setItem('pdfreader.locale', 'ja'));
+}
+
+async function addTextNote(page: Page, text: string, commit = true) {
+  await page.locator('#annotate-toggle').click();
+  await page.locator('[data-annotation-mode="3"]').click();
+  const pageBox = await page.locator('.page[data-page-number="1"]').boundingBox();
+  if (!pageBox) throw new Error('Page 1 is not visible');
+  await page.mouse.click(pageBox.x + pageBox.width * .55, pageBox.y + pageBox.height * .4);
+  await page.locator('.freeTextEditor .internal').last().fill(text);
+  if (commit) await page.mouse.click(pageBox.x + pageBox.width * .72, pageBox.y + pageBox.height * .55);
 }
 
 test('local rendering, Japanese search, navigation, outline, zoom, rotation, and tabs', async ({ page }) => {
@@ -189,4 +203,308 @@ test('spread modes, shortcut help, and pointer-centered wheel zoom work', async 
   await expect(page.locator('#shortcuts-dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#shortcuts-dialog')).toBeHidden();
+});
+
+test('bookmarks persist in browser preview and can be renamed and deleted', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#page-number').fill('2');
+  await page.locator('#page-number').press('Enter');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.locator('#bookmark-toggle').click();
+  await expect(page.locator('#bookmark-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#show-bookmarks').click();
+  await expect(page.locator('.bookmark-row')).toHaveCount(1);
+  await page.locator('.bookmark-row [aria-label="しおりの名前を変更"]').click();
+  await page.locator('.bookmark-row input').fill('調査メモ');
+  await page.locator('.bookmark-row input').press('Enter');
+  await expect(page.locator('.bookmark-link')).toHaveText('調査メモ');
+
+  await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
+  await open(page);
+  await ready(page);
+  await page.locator('#show-bookmarks').click();
+  await expect(page.locator('.bookmark-link')).toHaveText('調査メモ');
+  await page.locator('.bookmark-row [aria-label="しおりを削除"]').click();
+  await expect(page.locator('.sidebar-empty')).toHaveText('しおりはありません。');
+});
+
+test('search results show safe contextual snippets and navigate by page', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#find-toggle').click();
+  await page.locator('#find-input').fill('日本語');
+  await page.locator('#find-input').press('Enter');
+  const rows = page.locator('.search-result');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText('日本語');
+  const japaneseMarks = rows.locator('mark');
+  await expect(japaneseMarks).toHaveCount(3);
+  expect(await japaneseMarks.allTextContents()).toEqual(['日本語', '日本語', '日本語']);
+  await page.locator('#find-input').fill('local');
+  await page.locator('#find-input').press('Enter');
+  await expect.poll(async () => new Set(await rows.evaluateAll(items => items.map(item => (item as HTMLElement).dataset.page))).size).toBe(3);
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText('local');
+  const localMarks = rows.locator('mark');
+  await expect(localMarks).toHaveCount(6);
+  expect((await localMarks.allTextContents()).map(text => text.toLowerCase())).toEqual(Array(6).fill('local'));
+  await page.locator('.search-result[data-page="3"]').click();
+  await expect(page.locator('#page-number')).toHaveValue('3');
+  await expect(page.locator('.search-result.active')).toHaveAttribute('data-page', '3');
+});
+
+test('presentation mode enters with F5 and restores the previous zoom on exit', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#zoom').selectOption('1.25');
+  const before = await page.locator('#zoom').inputValue();
+  await page.keyboard.press('F5');
+  await expect(page.locator('#app')).toHaveClass(/presenting/);
+  await expect(page.locator('.toolbar')).toBeHidden();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#app')).not.toHaveClass(/presenting/);
+  await expect(page.locator('#zoom')).toHaveValue(before);
+});
+test('free-text annotations save as a PDF copy and render when reopened', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'メモ', false);
+  await expect(page.locator('.freeTextEditor .internal').last()).toBeFocused();
+  await expect(page.locator('.tab-main.modified')).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  const download = await downloadPromise;
+  const savedPath = path.resolve('test-results', download.suggestedFilename());
+  await download.saveAs(savedPath);
+  await expect(page.locator('.tab-main.modified')).toHaveCount(0);
+  const data = await readFile(savedPath);
+  expect(data.subarray(0, 5).toString()).toBe('%PDF-');
+  expect(data.length).toBeGreaterThan((await stat(fixture('reading-sample.pdf'))).size);
+
+  await openPaths(page, [savedPath]);
+  await ready(page, download.suggestedFilename());
+  await expect.poll(() => page.locator('.annotationLayer, .annotationEditorLayer').evaluateAll(layers =>
+    layers.some(layer => layer.textContent?.includes('メモ')),
+  )).toBe(true);
+});
+
+test('failed PDF serialization keeps edits protected and allows a retry', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page, ['forms-sample.pdf']);
+  await ready(page, 'forms-sample.pdf');
+  await page.locator('.annotationLayer input[type="text"]').fill('Keep this edit');
+  // Reject the worker reply, not saveDocument itself: exercise PDF.js's real
+  // finally/resetModified behavior that originally cleared the unsaved flag.
+  await page.evaluate(async () => {
+    const module = '/src/state.ts';
+    const { getActiveTab } = await import(module);
+    const handler = getActiveTab().pdf._transport.messageHandler;
+    const original = handler.sendWithPromise;
+    handler.sendWithPromise = function (action: string, ...args: unknown[]) {
+      if (action === 'SaveDocument') {
+        handler.sendWithPromise = original;
+        return Promise.reject(new Error('Injected serialization failure'));
+      }
+      return original.call(this, action, ...args);
+    };
+  });
+  await page.keyboard.press('Control+s');
+  await expect(page.locator('#toast')).toContainText('Injected serialization failure');
+  await expect(page.locator('.tab-main.modified')).toHaveCount(1);
+  await expect(page.locator('#save-copy')).toBeEnabled();
+  await page.locator('.tab-close').click();
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('#unsaved-cancel').click();
+  await expect(page.locator('.annotationLayer input[type="text"]')).toHaveValue('Keep this edit');
+  const downloadPromise = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  const download = await downloadPromise;
+  const savedPath = path.resolve('test-results', 'retry.pdf');
+  await download.saveAs(savedPath);
+  await expect(page.locator('.tab-main.modified')).toHaveCount(0);
+  await openPaths(page, [savedPath]);
+  await ready(page, 'retry.pdf');
+  await expect(page.locator('.document-pane:not([hidden]) .annotationLayer input[type="text"]')).toHaveValue('Keep this edit');
+});
+
+test('closing a tab commits a focused text editor before checking unsaved changes', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'Still typing', false);
+  // Programmatic click deliberately avoids a focusout, like a native close.
+  await page.locator('.tab-close').evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('#unsaved-cancel').click();
+  await expect(page.locator('.freeTextEditor .internal')).toHaveText('Still typing');
+  await expect(page.getByRole('tab')).toHaveCount(1);
+});
+
+test('automatic reload preserves a focused annotation draft', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'Keep draft during reload', false);
+  const kept = await page.evaluate(async () => {
+    const stateModule = '/src/state.ts';
+    const tabsModule = '/src/tabs.ts';
+    const { getActiveTab } = await import(stateModule);
+    const { reloadDocument } = await import(tabsModule);
+    const tab = getActiveTab();
+    const pdf = tab.pdf;
+    await reloadDocument(tab.info);
+    return tab.pdf === pdf && tab.modified;
+  });
+  expect(kept).toBe(true);
+  await expect(page.locator('.freeTextEditor .internal')).toHaveText('Keep draft during reload');
+});
+
+test('browser reload warns about a focused annotation draft', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'Keep draft during navigation', false);
+  const dialogPromise = page.waitForEvent('dialog');
+  // A dismissed reload never completes navigation; schedule it without waiting
+  // for a load event so the test checks the retained document immediately.
+  await page.evaluate(() => { setTimeout(() => location.reload(), 0); });
+  const dialog = await dialogPromise;
+  expect(dialog.type()).toBe('beforeunload');
+  await dialog.dismiss();
+  await expect(page.locator('.freeTextEditor .internal')).toHaveText('Keep draft during navigation');
+  await expect(page.locator('.tab-main.modified')).toHaveCount(1);
+});
+
+test('annotation swatches remember separate colors for each tool', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#annotate-toggle').click();
+  const color = (hex: string) => page.locator(`[data-annotation-color="${hex}"]`);
+
+  await page.locator('[data-annotation-mode="9"]').click();
+  await expect(color('#ffff00')).toHaveAttribute('aria-pressed', 'true');
+  await color('#00c853').click();
+  await page.locator('[data-annotation-mode="3"]').click();
+  await expect(color('#1f2933')).toHaveAttribute('aria-pressed', 'true');
+  await color('#ff5ca8').click();
+  await page.locator('[data-annotation-mode="15"]').click();
+  await expect(color('#f44336')).toHaveAttribute('aria-pressed', 'true');
+  await color('#1f2933').click();
+  await page.locator('[data-annotation-mode="3"]').click();
+  await expect(color('#ff5ca8')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('[data-annotation-mode="9"]').click();
+  await expect(color('#00c853')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('[data-annotation-mode="15"]').click();
+  await expect(color('#1f2933')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('ink strokes mark a document as modified', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#annotate-toggle').click();
+  await page.locator('[data-annotation-mode="15"]').click();
+  const box = await page.locator('.page[data-page-number="1"] canvas').first().boundingBox();
+  if (!box) throw new Error('Page canvas is not visible');
+  await page.mouse.move(box.x + box.width * .32, box.y + box.height * .36);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * .4, box.y + box.height * .4, { steps: 6 });
+  await page.mouse.move(box.x + box.width * .47, box.y + box.height * .35, { steps: 6 });
+  await page.mouse.up();
+  await page.locator('[data-annotation-mode="0"]').click();
+  await expect(page.locator('.tab-main.modified')).toBeVisible();
+});
+
+test('AcroForm fields are saved as a copy and retain their values', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page, ['forms-sample.pdf']);
+  await ready(page, 'forms-sample.pdf');
+  const nameField = page.locator('.annotationLayer input[type="text"]');
+  const approvedField = page.locator('.annotationLayer input[type="checkbox"]');
+  await nameField.focus();
+  await page.keyboard.press('Control+d');
+  await page.keyboard.press('F5');
+  await expect(page.locator('#bookmark-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#app')).not.toHaveClass(/presenting/);
+  await nameField.fill('PDFReader');
+  await approvedField.check();
+  await expect(page.locator('.tab-main.modified')).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  const download = await downloadPromise;
+  const savedPath = path.resolve('test-results', download.suggestedFilename());
+  await download.saveAs(savedPath);
+  const data = await readFile(savedPath);
+  expect(data.subarray(0, 5).toString()).toBe('%PDF-');
+  expect(data.length).toBeGreaterThan((await stat(fixture('forms-sample.pdf'))).size);
+
+  await openPaths(page, [savedPath]);
+  await ready(page, download.suggestedFilename());
+  await expect(page.locator('.annotationLayer input[type="text"]').last()).toHaveValue('PDFReader');
+  await expect(page.locator('.annotationLayer input[type="checkbox"]').last()).toBeChecked();
+});
+
+test('modified tabs can cancel or discard the unsaved-changes dialog', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'メモ');
+  await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('#unsaved-cancel').click();
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await page.getByRole('button', { name: 'reading-sample.pdf を閉じる' }).click();
+  await page.locator('#unsaved-discard').click();
+  await expect(page.getByRole('tab')).toHaveCount(0);
+});
+
+test('presentation mode keeps its temporary view settings out of saved positions on reload', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await page.locator('#zoom').selectOption('1.25');
+  await page.locator('#view-menu-toggle').click();
+  await page.locator('#spread-odd').click();
+  await page.locator('#scroll-vertical').click();
+  await expect.poll(() => page.evaluate(() =>
+    Object.keys(localStorage).find(key => key.startsWith('pdfreader.position:reading-sample.pdf:')),
+  )).toBeTruthy();
+  const positionKey = await page.evaluate(() =>
+    Object.keys(localStorage).find(key => key.startsWith('pdfreader.position:reading-sample.pdf:')),
+  );
+  await expect.poll(async () => {
+    const position = await page.evaluate(key => JSON.parse(localStorage.getItem(key!) || 'null'), positionKey);
+    return [position?.scale, position?.spread, position?.scroll];
+  }).toEqual(['1.25', 1, 0]);
+
+  await page.locator('#view-menu-toggle').click();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('F5');
+  await expect(page.locator('#app')).toHaveClass(/presenting/);
+  await page.reload();
+  const persisted = await page.evaluate(key => JSON.parse(localStorage.getItem(key!) || 'null'), positionKey);
+  expect(persisted).toMatchObject({ scale: '1.25', spread: 1, scroll: 0 });
 });
