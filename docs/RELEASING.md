@@ -8,7 +8,7 @@
 npx tauri signer generate -w ~/.tauri/pdfreader.key
 ```
 
-生成時に表示される秘密鍵をリポジトリの Actions secret `TAURI_SIGNING_PRIVATE_KEY` に、設定したパスワードを `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` に登録します。公開鍵はリポジトリ変数 `TAURI_UPDATER_PUBKEY` に登録します。秘密鍵はリポジトリへコミットしないでください。秘密鍵が未設定ならアップデート署名アーティファクトを作成せず、アプリも updater を有効にしません。
+生成時に表示される秘密鍵をリポジトリの Actions secret `TAURI_SIGNING_PRIVATE_KEY` に、設定したパスワードを `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` に登録します。公開鍵はリポジトリ変数 `TAURI_UPDATER_PUBKEY` に登録します。秘密鍵はリポジトリへコミットしないでください。Release workflow は公開鍵と秘密鍵の両方が設定されている場合だけアップデート署名アーティファクトを作成し、アプリの updater を有効にします。片方でも未設定なら両方とも無効になります。
 
 ## コード署名 secrets
 
@@ -27,7 +27,7 @@ npx tauri signer generate -w ~/.tauri/pdfreader.key
    git push origin v0.2.0
    ```
 
-   必要なら Actions の Release workflow を手動実行し、`release_tag` にタグ名を指定できます。
+   必要なら Actions の Release workflow を手動実行し、`release_tag` に既存のタグ名を指定できます。手動実行時も、そのタグのコミットをチェックアウトしてビルドします。未作成のタグは指定できません。
 3. workflow はタグメッセージをリリースノートとして使い、Windows x64 と macOS Universal をビルドして同じタグの draft release に成果物をアップロードします。アップデート署名キーが設定済みの場合は署名アーティファクトと `latest.json` も生成します。
 4. 成果物と署名を確認してから draft release を公開します。利用者の更新確認は公開済みの GitHub Release を参照します。
 

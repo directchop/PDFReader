@@ -4,7 +4,7 @@ import * as bridge from './bridge';
 import { $, button, input, message, notify } from './dom';
 import { getLocale, t } from './i18n';
 import { formatUpdateDate, shouldAutoCheck } from './update-policy';
-import { saveAsCopy } from './annotations';
+import { commitPendingAnnotations, saveAsCopy } from './annotations';
 import { flushPosition, flushSession } from './tabs';
 import { requestUnsavedChoice } from './unsaved';
 import { tabs } from './state';
@@ -100,40 +100,30 @@ function showProgress(progress: bridge.UpdateProgress) {
 
 async function installAvailableUpdate() {
   if (!currentUpdate || installing) return;
-  setUpdateDialogOpen(false);
-  const modified = tabs.filter(tab => tab.modified);
-  if (modified.length) {
-    const choice = await requestUnsavedChoice(modified);
-    if (choice === 'cancel') {
-      setUpdateDialogOpen(true);
-      return;
-    }
-    if (choice === 'save') {
-      for (const tab of modified) {
-        if (!await saveAsCopy(tab)) {
-          setUpdateDialogOpen(true);
-          return;
-        }
-      }
-    }
-  }
-  try {
-    await Promise.all(tabs.map(tab => flushPosition(tab)));
-    await flushSession();
-  } catch (error) {
-    notify(message(error));
-    setUpdateDialogOpen(true);
-    return;
-  }
-
+  // Keep this modal beneath the unsaved dialog throughout preparation. Otherwise
+  // users can edit another tab while a save/session flush is awaiting disk I/O.
   installing = true;
   button('update-install').disabled = true;
   button('update-later').disabled = true;
-  $('update-progress').hidden = false;
-  $('update-progress-text').hidden = false;
-  $('update-progress-text').textContent = t('update.downloading');
-  setUpdateDialogOpen(true);
   try {
+    for (const tab of tabs) commitPendingAnnotations(tab);
+    const modified = tabs.filter(tab => tab.modified);
+    if (modified.length) {
+      const choice = await requestUnsavedChoice(modified);
+      if (choice === 'cancel') return;
+      if (choice === 'save') {
+        for (const tab of modified) {
+          if (!await saveAsCopy(tab)) return;
+        }
+        for (const tab of tabs) commitPendingAnnotations(tab);
+        if (tabs.some(tab => tab.modified)) return;
+      }
+    }
+    await Promise.all(tabs.map(tab => flushPosition(tab)));
+    await flushSession();
+    $('update-progress').hidden = false;
+    $('update-progress-text').hidden = false;
+    $('update-progress-text').textContent = t('update.downloading');
     const unlisten = await listen<bridge.UpdateProgress>('update-progress', event => showProgress(event.payload));
     try {
       await bridge.installUpdate();
@@ -142,6 +132,7 @@ async function installAvailableUpdate() {
     }
   } catch (error) {
     notify(message(error));
+  } finally {
     installing = false;
     button('update-install').disabled = false;
     button('update-later').disabled = false;
