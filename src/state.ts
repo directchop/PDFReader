@@ -2,6 +2,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist/legacy
 import type { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import type { DocumentInfo } from './bridge';
 import type { Bookmark } from './bridge';
+import type { AnnotationEditorUIManager } from 'pdfjs-dist/types/src/display/editor/tools';
 
 export interface ReaderTab {
   info: DocumentInfo;
@@ -15,6 +16,9 @@ export interface ReaderTab {
   pdf?: PDFDocumentProxy;
   bookmarks: Bookmark[];
   modified: boolean;
+  savedAnnotationHash: string;
+  annotationEditor?: Pick<AnnotationEditorUIManager, 'endCurrentEditing'>;
+  saving?: Promise<boolean>;
   annotationMode: number;
   annotationColors: { highlight: string; text: string; ink: string };
   annotationThickness: number;

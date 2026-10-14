@@ -18,7 +18,7 @@ import { t } from './i18n';
 import { toggleCurrentBookmark } from './bookmarks';
 import { setFullscreen, syncFullscreen } from './fullscreen';
 import { exitPresentation, initializePresentation } from './presentation';
-import { initializeAnnotations, refreshAnnotationToolbar, saveAsCopy } from './annotations';
+import { commitPendingAnnotations, initializeAnnotations, refreshAnnotationToolbar, saveAsCopy } from './annotations';
 import { requestUnsavedChoice } from './unsaved';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -26,6 +26,7 @@ mountIcons();
 initializePrint();
 initializePresentation();
 initializeAnnotations();
+window.addEventListener('annotationmodified', refreshTabs);
 const passwordDialog = $<HTMLDialogElement>('password-dialog');
 const sidebarPreferencesKey = 'pdfreader.sidebar';
 const sidebar = $('sidebar');
@@ -108,6 +109,14 @@ button('clear-recent').onclick = () => run(async () => {
   await refreshRecent();
 });
 window.addEventListener('beforeunload', event => {
+  if (!bridge.desktop) {
+    try {
+      for (const tab of tabs) commitPendingAnnotations(tab);
+    } catch {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  }
   if (!bridge.desktop && tabs.some(tab => tab.modified)) {
     event.preventDefault();
     event.returnValue = '';
@@ -305,8 +314,16 @@ if (!bridge.desktop) {
   let closePrompt = false;
   let allowClose = false;
   void currentWindow.onCloseRequested(event => {
+    if (allowClose) return;
+    try {
+      for (const tab of tabs) commitPendingAnnotations(tab);
+    } catch (error) {
+      event.preventDefault();
+      notify(String(error));
+      return;
+    }
     const modified = tabs.filter(tab => tab.modified);
-    if (!modified.length || allowClose) return;
+    if (!modified.length) return;
     event.preventDefault();
     if (closePrompt) return;
     closePrompt = true;
@@ -317,6 +334,8 @@ if (!bridge.desktop) {
         for (const tab of modified) {
           if (!await saveAsCopy(tab)) return;
         }
+        for (const tab of tabs) commitPendingAnnotations(tab);
+        if (tabs.some(tab => tab.modified)) return;
       }
       allowClose = true;
       await currentWindow.destroy();

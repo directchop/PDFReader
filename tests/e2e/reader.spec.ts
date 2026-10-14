@@ -20,14 +20,14 @@ async function useJapanese(page: Page) {
   await page.addInitScript(() => localStorage.setItem('pdfreader.locale', 'ja'));
 }
 
-async function addTextNote(page: Page, text: string) {
+async function addTextNote(page: Page, text: string, commit = true) {
   await page.locator('#annotate-toggle').click();
   await page.locator('[data-annotation-mode="3"]').click();
   const pageBox = await page.locator('.page[data-page-number="1"]').boundingBox();
   if (!pageBox) throw new Error('Page 1 is not visible');
   await page.mouse.click(pageBox.x + pageBox.width * .55, pageBox.y + pageBox.height * .4);
   await page.locator('.freeTextEditor .internal').last().fill(text);
-  await page.mouse.click(pageBox.x + pageBox.width * .72, pageBox.y + pageBox.height * .55);
+  if (commit) await page.mouse.click(pageBox.x + pageBox.width * .72, pageBox.y + pageBox.height * .55);
 }
 
 test('local rendering, Japanese search, navigation, outline, zoom, rotation, and tabs', async ({ page }) => {
@@ -279,7 +279,8 @@ test('free-text annotations save as a PDF copy and render when reopened', async 
   await page.goto('/');
   await open(page);
   await ready(page);
-  await addTextNote(page, 'メモ');
+  await addTextNote(page, 'メモ', false);
+  await expect(page.locator('.freeTextEditor .internal').last()).toBeFocused();
   await expect(page.locator('.tab-main.modified')).toBeVisible();
 
   const downloadPromise = page.waitForEvent('download');
@@ -287,6 +288,7 @@ test('free-text annotations save as a PDF copy and render when reopened', async 
   const download = await downloadPromise;
   const savedPath = path.resolve('test-results', download.suggestedFilename());
   await download.saveAs(savedPath);
+  await expect(page.locator('.tab-main.modified')).toHaveCount(0);
   const data = await readFile(savedPath);
   expect(data.subarray(0, 5).toString()).toBe('%PDF-');
   expect(data.length).toBeGreaterThan((await stat(fixture('reading-sample.pdf'))).size);
@@ -296,6 +298,97 @@ test('free-text annotations save as a PDF copy and render when reopened', async 
   await expect.poll(() => page.locator('.annotationLayer, .annotationEditorLayer').evaluateAll(layers =>
     layers.some(layer => layer.textContent?.includes('メモ')),
   )).toBe(true);
+});
+
+test('failed PDF serialization keeps edits protected and allows a retry', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page, ['forms-sample.pdf']);
+  await ready(page, 'forms-sample.pdf');
+  await page.locator('.annotationLayer input[type="text"]').fill('Keep this edit');
+  // Reject the worker reply, not saveDocument itself: exercise PDF.js's real
+  // finally/resetModified behavior that originally cleared the unsaved flag.
+  await page.evaluate(async () => {
+    const module = '/src/state.ts';
+    const { getActiveTab } = await import(module);
+    const handler = getActiveTab().pdf._transport.messageHandler;
+    const original = handler.sendWithPromise;
+    handler.sendWithPromise = function (action: string, ...args: unknown[]) {
+      if (action === 'SaveDocument') {
+        handler.sendWithPromise = original;
+        return Promise.reject(new Error('Injected serialization failure'));
+      }
+      return original.call(this, action, ...args);
+    };
+  });
+  await page.keyboard.press('Control+s');
+  await expect(page.locator('#toast')).toContainText('Injected serialization failure');
+  await expect(page.locator('.tab-main.modified')).toHaveCount(1);
+  await expect(page.locator('#save-copy')).toBeEnabled();
+  await page.locator('.tab-close').click();
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('#unsaved-cancel').click();
+  await expect(page.locator('.annotationLayer input[type="text"]')).toHaveValue('Keep this edit');
+  const downloadPromise = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  const download = await downloadPromise;
+  const savedPath = path.resolve('test-results', 'retry.pdf');
+  await download.saveAs(savedPath);
+  await expect(page.locator('.tab-main.modified')).toHaveCount(0);
+  await openPaths(page, [savedPath]);
+  await ready(page, 'retry.pdf');
+  await expect(page.locator('.document-pane:not([hidden]) .annotationLayer input[type="text"]')).toHaveValue('Keep this edit');
+});
+
+test('closing a tab commits a focused text editor before checking unsaved changes', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'Still typing', false);
+  // Programmatic click deliberately avoids a focusout, like a native close.
+  await page.locator('.tab-close').evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('#unsaved-cancel').click();
+  await expect(page.locator('.freeTextEditor .internal')).toHaveText('Still typing');
+  await expect(page.getByRole('tab')).toHaveCount(1);
+});
+
+test('automatic reload preserves a focused annotation draft', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'Keep draft during reload', false);
+  const kept = await page.evaluate(async () => {
+    const stateModule = '/src/state.ts';
+    const tabsModule = '/src/tabs.ts';
+    const { getActiveTab } = await import(stateModule);
+    const { reloadDocument } = await import(tabsModule);
+    const tab = getActiveTab();
+    const pdf = tab.pdf;
+    await reloadDocument(tab.info);
+    return tab.pdf === pdf && tab.modified;
+  });
+  expect(kept).toBe(true);
+  await expect(page.locator('.freeTextEditor .internal')).toHaveText('Keep draft during reload');
+});
+
+test('browser reload warns about a focused annotation draft', async ({ page }) => {
+  await useJapanese(page);
+  await page.goto('/');
+  await open(page);
+  await ready(page);
+  await addTextNote(page, 'Keep draft during navigation', false);
+  const dialogPromise = page.waitForEvent('dialog');
+  // A dismissed reload never completes navigation; schedule it without waiting
+  // for a load event so the test checks the retained document immediately.
+  await page.evaluate(() => { setTimeout(() => location.reload(), 0); });
+  const dialog = await dialogPromise;
+  expect(dialog.type()).toBe('beforeunload');
+  await dialog.dismiss();
+  await expect(page.locator('.freeTextEditor .internal')).toHaveText('Keep draft during navigation');
+  await expect(page.locator('.tab-main.modified')).toHaveCount(1);
 });
 
 test('annotation swatches remember separate colors for each tool', async ({ page }) => {
