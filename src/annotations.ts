@@ -14,6 +14,23 @@ const highlightPalette = [
 
 export const highlightColors = highlightPalette.map(([color, name]) => `${name}=${color}`).join(',');
 
+export function markAnnotationsModified(tab: ReaderTab) {
+  if (tab.modified) return;
+  tab.modified = true;
+  refreshAnnotationToolbar();
+  window.dispatchEvent(new Event('annotationmodified'));
+}
+
+// Native close requests do not blur the WebView's active editor. Commit both
+// text and drawing sessions before inspecting storage or creating a snapshot.
+export function commitPendingAnnotations(tab: ReaderTab) {
+  if (!tab.pdf || tab.disposed) return;
+  tab.annotationEditor?.endCurrentEditing();
+  if (tab.pdf.annotationStorage.serializable.hash !== tab.savedAnnotationHash) {
+    markAnnotationsModified(tab);
+  }
+}
+
 function colorSlot(mode: number): keyof ReaderTab['annotationColors'] {
   if (mode === AnnotationEditorType.FREETEXT) return 'text';
   if (mode === AnnotationEditorType.INK) return 'ink';
@@ -156,26 +173,40 @@ function downloadPdf(name: string, data: Uint8Array) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function saveAsCopy(tab = getActiveTab()): Promise<boolean> {
-  if (!tab?.pdf || !tab.modified) return false;
-  const name = suggestedName(tab);
+export function saveAsCopy(tab = getActiveTab()): Promise<boolean> {
+  if (!tab?.pdf) return Promise.resolve(false);
+  // Repeated shortcuts and a close request must share the same save operation.
+  if (tab.saving) return tab.saving;
+  tab.saving = writeCopy(tab).finally(() => { tab.saving = undefined; });
+  return tab.saving;
+}
+
+async function writeCopy(tab: ReaderTab): Promise<boolean> {
   try {
+    commitPendingAnnotations(tab);
+    if (!tab.pdf || !tab.modified) return false;
+    const name = suggestedName(tab);
+    const token = bridge.desktop ? await bridge.pickSavePath(tab.info.id, name) : undefined;
+    if (bridge.desktop && !token) return false;
+    commitPendingAnnotations(tab);
+    const pdf = tab.pdf;
+    const snapshotHash = pdf.annotationStorage.serializable.hash;
+    const bytes = await pdf.saveDocument();
     if (bridge.desktop) {
-      const token = await bridge.pickSavePath(tab.info.id, name);
-      if (!token) return false;
-      const bytes = await tab.pdf.saveDocument();
-      const savedName = await bridge.writeSavedCopy(token, bytes);
+      const savedName = await bridge.writeSavedCopy(token!, bytes);
       notify(t('annotation.saved', { name: savedName }));
     } else {
-      const bytes = await tab.pdf.saveDocument();
       downloadPdf(name, bytes);
       notify(t('annotation.saved', { name }));
     }
-    tab.pdf.annotationStorage.resetModified();
-    tab.modified = false;
+    // PDF.js resets its own flag even on serialization failure. Only a completed
+    // output advances our saved snapshot; edits made during the await stay dirty.
+    commitPendingAnnotations(tab);
+    tab.savedAnnotationHash = snapshotHash;
+    tab.modified = pdf.annotationStorage.serializable.hash !== snapshotHash;
     refreshAnnotationToolbar();
     window.dispatchEvent(new Event('annotationmodified'));
-    return true;
+    return !tab.modified;
   } catch (error) {
     notify(message(error));
     return false;

@@ -11,7 +11,7 @@ import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
 import { refreshFindCount, search } from './find';
-import { closeAnnotationBar, highlightColors, refreshAnnotationToolbar, saveAsCopy } from './annotations';
+import { closeAnnotationBar, commitPendingAnnotations, highlightColors, markAnnotationsModified, refreshAnnotationToolbar, saveAsCopy } from './annotations';
 import { requestUnsavedChoice } from './unsaved';
 import { presentationBaseline } from './presentation';
 
@@ -71,22 +71,15 @@ function handlePassword(tab: ReaderTab, name: string, update: (password: string)
 
 function trackModifiedState(tab: ReaderTab) {
   if (!tab.pdf) return;
-  const refresh = () => {
-    refreshTabs();
-    if (getActiveTab() === tab) refreshAnnotationToolbar();
-  };
+  tab.savedAnnotationHash = tab.pdf.annotationStorage.serializable.hash;
   const storage = tab.pdf.annotationStorage as unknown as {
     onSetModified: (() => void) | null;
     onResetModified: (() => void) | null;
   };
-  storage.onSetModified = () => {
-    tab.modified = true;
-    refresh();
-  };
-  storage.onResetModified = () => {
-    tab.modified = false;
-    refresh();
-  };
+  storage.onSetModified = () => markAnnotationsModified(tab);
+  // saveDocument() calls resetModified() in a finally block, before disk I/O.
+  // It is not evidence that the user's changes have been saved.
+  storage.onResetModified = null;
 }
 
 function loadPdf(info: bridge.DocumentInfo, tab: ReaderTab, onReadError: (error: unknown) => void) {
@@ -253,6 +246,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     task: null!,
     bookmarks: [],
     modified: false,
+    savedAnnotationHash: '',
     annotationMode: AnnotationEditorType.NONE,
     annotationColors: { highlight: '#ffff00', text: '#1f2933', ink: '#f44336' },
     annotationThickness: 3,
@@ -265,6 +259,14 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     rendered: false,
   };
   tabs.push(tab);
+  bus.on('annotationeditoruimanager', (event: { uiManager: ReaderTab['annotationEditor'] }) => {
+    tab.annotationEditor = event.uiManager;
+  });
+  pane.addEventListener('input', event => {
+    if (event.target instanceof Element && event.target.closest('.annotationEditorLayer')) {
+      markAnnotationsModified(tab);
+    }
+  });
   activate(tab);
   let changedReadFailure = false;
   const load = loadPdf(info, tab, error => {
@@ -373,6 +375,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
 export async function reloadDocument(info: bridge.DocumentInfo) {
   const tab = tabs.find(item => item.info.id === info.id);
   if (!tab || tab.disposed) return;
+  commitPendingAnnotations(tab);
   if (tab.modified) {
     notify(t('reload.unsaved', { name: info.name }));
     return undefined;
@@ -410,6 +413,7 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     }
     return undefined;
   }
+  commitPendingAnnotations(tab);
   if (tab.disposed || tab.modified) {
     await load.task.destroy().catch(() => {});
     if (tab.modified) notify(t('reload.unsaved', { name: info.name }));
@@ -427,6 +431,7 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     rendered: tab.rendered,
   };
   tab.links.setDocument(loaded.pdf);
+  tab.annotationEditor = undefined;
   tab.viewer.setDocument(loaded.pdf);
   tab.info = reloadedInfo;
   tab.task = load.task;
@@ -468,6 +473,7 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
 
 export async function closeTab(tab: ReaderTab, resolveUnsaved = false) {
   if (tab.disposed) return;
+  commitPendingAnnotations(tab);
   if (tab.modified && !resolveUnsaved) {
     const choice = await requestUnsavedChoice([tab]);
     if (choice === 'cancel') return;

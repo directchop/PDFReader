@@ -121,6 +121,15 @@ Windows の既定 Rust が GNU の場合、直接実行する Cargo コマンド
 - 印刷テストはブラウザで PDF 出力まで確認します。物理プリンターでの出力確認とは別です。
 - Windows でビルド後に `npm run test:native` を実行すると、実際の Rust / WebView2 プロセスでファイル読み込み・日本語検索・不正トークンの拒否・印刷用 PDF 出力を確認します。テスト用プロセスだけにローカルのデバッグポートを設定します。物理プリンターには送信しません。
 
+注釈の保存失敗・キャンセル・保存中の追加入力は単体テストで、PDF.js の保存失敗後の再試行と入力途中の注釈の保存・終了確認はブラウザテストで検証します。Windows の実ウィンドウ終了も確認する場合は、アプリデータを分離したテスト用ビルドで実行してください。
+
+```sh
+npm run desktop:build -- --debug --no-bundle --config tests/native/tauri.conf.json
+node scripts/native-annotations-smoke.mjs src-tauri/target/debug/pdfreader.exe
+```
+
+このテストは入力中の注釈があるウィンドウに通常の終了要求を送り、キャンセル時の内容保持と、明示的に破棄した場合の終了を確認します。macOS の実ウィンドウ操作は対象外です。
+
 テスト用 PDF は本プロジェクトで作成した合成データです。再生成する場合のみ Python の `reportlab` / `pypdf` / `cryptography` を入れ、`python scripts/make-fixtures.py` を実行します。通常のビルド・テストには Python は不要です。
 
 ## 構成

@@ -46,7 +46,7 @@ export function registerShortcuts() {
       return;
     }
     const target = event.target;
-    if (mod && key === 's' && active?.modified) {
+    if (mod && key === 's' && active?.pdf) {
       event.preventDefault();
       run(() => saveAsCopy(active));
       return;
