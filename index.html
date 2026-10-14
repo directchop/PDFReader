@@ -61,6 +61,7 @@
             <div class="tool-group toolbar-actions">
               <button id="bookmark-toggle" class="icon-button" aria-label="このページにしおりを追加" title="このページにしおりを追加" data-i18n-aria-label="toolbar.bookmark" data-i18n-title="toolbar.bookmark" aria-pressed="false"><span data-icon="bookmark"></span></button>
               <button id="present" class="icon-button" aria-label="プレゼンテーションモード" title="プレゼンテーションモード" data-i18n-aria-label="toolbar.present" data-i18n-title="toolbar.present" aria-pressed="false"><span data-icon="present"></span></button>
+              <button id="annotate-toggle" class="icon-button" aria-label="注釈ツール" title="注釈ツール" data-i18n-aria-label="toolbar.annotate" data-i18n-title="toolbar.annotate" aria-expanded="false" aria-controls="annotationbar"><span data-icon="annotate"></span></button>
               <div class="view-menu-anchor">
                 <button id="view-menu-toggle" class="icon-button" aria-label="表示設定" title="表示設定" data-i18n-aria-label="toolbar.view" data-i18n-title="toolbar.view" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-menu"><span data-icon="layout"></span></button>
                 <div id="view-menu" class="popover view-menu" role="dialog" aria-label="表示設定" data-i18n-aria-label="view.menu" hidden>
@@ -87,6 +88,27 @@
               <button id="print" class="icon-button" aria-label="印刷" title="印刷 (Ctrl / ⌘ P)" data-i18n-aria-label="toolbar.print" data-i18n-title="toolbar.printTitle"><span data-icon="print"></span></button>
             </div>
           </div>
+          <div id="annotationbar" class="annotationbar" aria-label="注釈ツール" data-i18n-aria-label="toolbar.annotate" hidden>
+            <div class="segmented annotation-tools" role="group" aria-label="注釈ツール">
+              <button type="button" data-annotation-mode="0" data-i18n="annotation.select">選択</button>
+              <button type="button" data-annotation-mode="9" data-i18n="annotation.highlight">ハイライト</button>
+              <button type="button" data-annotation-mode="3" data-i18n="annotation.text">テキスト</button>
+              <button type="button" data-annotation-mode="15" data-i18n="annotation.ink">手書き</button>
+            </div>
+            <div class="annotation-controls">
+              <div id="annotation-colors" class="annotation-colors" role="group" aria-label="色">
+                <button type="button" class="color-swatch selected" data-annotation-color="#ffff00" style="--swatch: #ffff00" aria-label="黄色" data-i18n-aria-label="annotation.yellow" aria-pressed="true"></button>
+                <button type="button" class="color-swatch" data-annotation-color="#00c853" style="--swatch: #00c853" aria-label="緑色" data-i18n-aria-label="annotation.green" aria-pressed="false"></button>
+                <button type="button" class="color-swatch" data-annotation-color="#2196f3" style="--swatch: #2196f3" aria-label="青色" data-i18n-aria-label="annotation.blue" aria-pressed="false"></button>
+                <button type="button" class="color-swatch" data-annotation-color="#ff5ca8" style="--swatch: #ff5ca8" aria-label="ピンク" data-i18n-aria-label="annotation.pink" aria-pressed="false"></button>
+                <button type="button" class="color-swatch" data-annotation-color="#f44336" style="--swatch: #f44336" aria-label="赤色" data-i18n-aria-label="annotation.red" aria-pressed="false"></button>
+                <button type="button" class="color-swatch" data-annotation-color="#1f2933" style="--swatch: #1f2933" aria-label="濃いグレー" data-i18n-aria-label="annotation.dark" aria-pressed="false"></button>
+              </div>
+              <label id="ink-thickness-control" class="annotation-control" hidden><span data-i18n="annotation.thickness">太さ</span><input id="ink-thickness" type="range" min="1" max="20" value="3" aria-label="線の太さ" data-i18n-aria-label="annotation.thickness"></label>
+              <label id="freetext-size-control" class="annotation-control" hidden><span data-i18n="annotation.fontSize">文字サイズ</span><select id="freetext-size" aria-label="文字サイズ" data-i18n-aria-label="annotation.fontSize"><option value="12">12</option><option value="14" selected>14</option><option value="18">18</option><option value="24">24</option><option value="32">32</option></select></label>
+            </div>
+            <button type="button" id="save-copy" class="primary annotation-save" data-i18n="annotation.saveCopy" disabled>別名で保存</button>
+          </div>
           <div id="findbar" class="findbar" hidden><div class="find-field"><span data-icon="search"></span><input id="find-input" type="search" placeholder="文書内を検索" aria-label="検索文字列" data-i18n-placeholder="find.placeholder" data-i18n-aria-label="find.query"><span id="find-count" role="status"></span></div><button id="find-previous" class="icon-button" aria-label="前の検索結果" data-i18n-aria-label="find.previous"><span data-icon="up"></span></button><button id="find-next" class="icon-button" aria-label="次の検索結果" data-i18n-aria-label="find.next"><span data-icon="down"></span></button><label class="check"><input id="match-case" type="checkbox"><span data-i18n="find.matchCase">大文字・小文字</span></label><button id="find-close" class="icon-button" aria-label="検索を閉じる" data-i18n-aria-label="find.close"><span data-icon="close"></span></button></div>
           <div class="reader-body"><aside id="sidebar"><div class="sidebar-tabs segmented"><button id="show-pages" class="selected" data-i18n="sidebar.pages">ページ</button><button id="show-outline" data-i18n="sidebar.outline">目次</button><button id="show-bookmarks" data-i18n="sidebar.bookmarks">しおり</button><button id="show-search-results" data-i18n="sidebar.search">検索</button></div><div id="sidebar-content"></div></aside><div id="documents"></div></div>
           <footer class="statusbar"><span id="document-status" role="status" data-i18n="status.loading">読み込み中…</span><span id="document-details"></span><span class="status-local"><i></i> <span data-i18n="local.status">この端末のみ</span></span></footer>
@@ -104,6 +126,11 @@
         <div class="shortcut-row"><span data-i18n="shortcuts.closeTab">タブを閉じる</span><kbd data-shortcut-modifier data-shortcut-key="W">Ctrl+W</kbd></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.bookmark">このページにしおりを追加</span><kbd data-shortcut-modifier data-shortcut-key="D">Ctrl+D</kbd></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.presentation">プレゼンテーションモード</span><kbd>F5</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.save">注釈を別名で保存</span><kbd data-shortcut-modifier data-shortcut-key="S">Ctrl+S</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.annotationSelect">注釈ツール：選択</span><kbd>V</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.annotationHighlight">注釈ツール：ハイライト</span><kbd>H</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.annotationText">注釈ツール：テキスト</span><kbd>T</kbd></div>
+        <div class="shortcut-row"><span data-i18n="shortcuts.annotationInk">注釈ツール：手書き</span><kbd>I</kbd></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.previousPage">前のページ</span><kbd>←</kbd></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.nextPage">次のページ</span><kbd>→</kbd></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.firstPage">最初のページ</span><kbd>Home</kbd></div>
@@ -119,6 +146,17 @@
         <div class="shortcut-row"><span data-i18n="shortcuts.cycleTabs">タブを切り替え</span><kbd>Ctrl+Tab / Ctrl+Shift+Tab</kbd></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.fullscreen">全画面表示を切り替え</span><kbd>F11</kbd><span class="mac-shortcut" hidden><kbd>Ctrl+⌘+F</kbd></span></div>
         <div class="shortcut-row"><span data-i18n="shortcuts.help">ショートカット一覧を開く</span><kbd>? / F1</kbd></div>
+      </div>
+    </dialog>
+    <dialog id="unsaved-dialog" aria-labelledby="unsaved-title">
+      <div class="dialog-icon" data-icon="annotate"></div>
+      <h2 id="unsaved-title" data-i18n="unsaved.title">未保存の変更</h2>
+      <p data-i18n="unsaved.message">未保存の注釈があります。保存するか、変更を破棄してください。</p>
+      <ul id="unsaved-files"></ul>
+      <div class="dialog-actions">
+        <button type="button" id="unsaved-cancel" data-i18n="unsaved.cancel">キャンセル</button>
+        <button type="button" id="unsaved-discard" data-i18n="unsaved.discard">破棄</button>
+        <button type="button" id="unsaved-save" class="primary" data-i18n="unsaved.save">保存</button>
       </div>
     </dialog>
     <dialog id="print-dialog"><form id="print-form"><div class="dialog-icon" data-icon="print"></div><h2 data-i18n="print.title">PDFを印刷</h2><p data-i18n="print.intro">印刷するページを準備してから、OSの印刷画面を開きます。</p><label class="field-label" for="print-range" data-i18n="print.rangeLabel">ページ範囲</label><input id="print-range" placeholder="すべて（例: 1-3, 5）" data-i18n-placeholder="print.rangePlaceholder"><p class="field-note" data-i18n="print.rangeNote">1回につき100ページまで。用紙サイズ・倍率は印刷画面で確認できます。</p><p id="print-progress" role="status"></p><div class="dialog-actions"><button type="button" id="print-cancel" data-i18n="action.cancel">キャンセル</button><button type="submit" id="print-submit" class="primary" data-i18n="print.submit">印刷へ進む</button></div></form></dialog>

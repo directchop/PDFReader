@@ -25,6 +25,52 @@ async fn open_documents(state: State<'_, SharedLibrary>) -> Result<OpenBatch, St
 }
 
 #[tauri::command]
+async fn pick_save_path(
+    id: String,
+    suggested_name: String,
+    state: State<'_, SharedLibrary>,
+) -> Result<Option<String>, String> {
+    let source = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .document_path(&id)?;
+    let directory = source.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .add_filter("PDF", &["pdf"])
+        .set_directory(directory)
+        .set_file_name(suggested_name)
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let token = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .issue_save_token(&id, file.path())?;
+    Ok(Some(token))
+}
+
+#[tauri::command]
+fn write_saved_copy(
+    request: tauri::ipc::Request<'_>,
+    state: State<'_, SharedLibrary>,
+) -> Result<String, String> {
+    let token = request
+        .headers()
+        .get("x-save-token")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| "invalid_save_token".to_string())?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("invalid_save_token".into());
+    };
+    state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .write_saved_copy(token, bytes)
+}
+
+#[tauri::command]
 fn take_pending(state: State<'_, SharedLibrary>) -> Result<OpenBatch, String> {
     Ok(std::mem::take(
         &mut state.lock().map_err(|e| e.to_string())?.pending,
@@ -230,6 +276,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_documents,
+            pick_save_path,
+            write_saved_copy,
             take_pending,
             save_session,
             restore_session,

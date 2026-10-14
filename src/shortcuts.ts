@@ -6,6 +6,8 @@ import { closeTab, activate } from './tabs';
 import { setScale, zoomBy } from './toolbar';
 import { toggleCurrentBookmark } from './bookmarks';
 import { enterPresentation, exitPresentation } from './presentation';
+import { AnnotationEditorType } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { closeAnnotationBar, saveAsCopy, setAnnotationMode, toggleAnnotationBar } from './annotations';
 
 export function registerShortcuts() {
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -44,6 +46,21 @@ export function registerShortcuts() {
       return;
     }
     const target = event.target;
+    if (mod && key === 's' && active?.pdf) {
+      event.preventDefault();
+      run(() => saveAsCopy(active));
+      return;
+    }
+    const annotationOrFormFocus = target instanceof Element && !!target.closest(
+      '.annotationEditorLayer, .freeTextEditor, .inkEditor, .annotationLayer input, .annotationLayer textarea, .annotationLayer select, .annotationLayer [contenteditable="true"]',
+    );
+    if (annotationOrFormFocus) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAnnotationBar();
+      }
+      return;
+    }
     const editing = target instanceof Element && !!target.closest('input, select, textarea, [contenteditable="true"]');
 
     if (mac && event.ctrlKey && event.metaKey && key === 'f' && !editing) {
@@ -89,6 +106,16 @@ export function registerShortcuts() {
     } else if (event.key === 'F5') {
       event.preventDefault();
       run(() => enterPresentation());
+    } else if (!mod && active?.pdf && ['v', 'h', 't', 'i'].includes(key)) {
+      event.preventDefault();
+      if ($('annotationbar').hidden) toggleAnnotationBar();
+      const modes: Record<string, number> = {
+        v: AnnotationEditorType.NONE,
+        h: AnnotationEditorType.HIGHLIGHT,
+        t: AnnotationEditorType.FREETEXT,
+        i: AnnotationEditorType.INK,
+      };
+      setAnnotationMode(modes[key]);
     } else if (event.key === 'ArrowLeft' && active?.pdf) {
       event.preventDefault();
       active.viewer.previousPage();

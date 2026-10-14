@@ -1,4 +1,4 @@
-import { AnnotationMode, GlobalWorkerOptions, PasswordResponses, PermissionFlag, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { AnnotationEditorType, AnnotationMode, GlobalWorkerOptions, PasswordResponses, PermissionFlag, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { EventBus, PDFFindController, PDFLinkService, PDFViewer, ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import * as bridge from './bridge';
 import type { ReadingPosition } from './bridge';
@@ -11,6 +11,8 @@ import { renderSidebar } from './sidebar';
 import { refreshRecent } from './recent';
 import { describeError, t } from './i18n';
 import { refreshFindCount, search } from './find';
+import { closeAnnotationBar, commitPendingAnnotations, highlightColors, markAnnotationsModified, refreshAnnotationToolbar, saveAsCopy } from './annotations';
+import { requestUnsavedChoice } from './unsaved';
 import { presentationBaseline } from './presentation';
 
 let sessionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -67,6 +69,19 @@ function handlePassword(tab: ReaderTab, name: string, update: (password: string)
   input('password').focus();
 }
 
+function trackModifiedState(tab: ReaderTab) {
+  if (!tab.pdf) return;
+  tab.savedAnnotationHash = tab.pdf.annotationStorage.serializable.hash;
+  const storage = tab.pdf.annotationStorage as unknown as {
+    onSetModified: (() => void) | null;
+    onResetModified: (() => void) | null;
+  };
+  storage.onSetModified = () => markAnnotationsModified(tab);
+  // saveDocument() calls resetModified() in a finally block, before disk I/O.
+  // It is not evidence that the user's changes have been saved.
+  storage.onResetModified = null;
+}
+
 function loadPdf(info: bridge.DocumentInfo, tab: ReaderTab, onReadError: (error: unknown) => void) {
   const transport = new LocalPdfTransport(info, onReadError);
   const task = getDocument({
@@ -121,8 +136,11 @@ export function refreshTabs() {
     item.className = `tab${getActiveTab() === tab ? ' active' : ''}`;
     const main = document.createElement('button');
     main.className = 'tab-main';
+    main.classList.toggle('modified', tab.modified);
     main.role = 'tab';
     main.setAttribute('aria-selected', String(getActiveTab() === tab));
+    if (tab.modified) main.setAttribute('aria-description', t('annotation.unsaved'));
+    else main.removeAttribute('aria-description');
     main.title = tab.info.path;
     main.innerHTML = `${icon('file')}<span></span>`;
     main.querySelector('span')!.textContent = tab.info.name;
@@ -138,6 +156,8 @@ export function refreshTabs() {
 }
 
 export function activate(tab?: ReaderTab) {
+  const previous = getActiveTab();
+  if (previous !== tab) closeAnnotationBar(previous);
   setActiveTab(tab);
   scheduleSessionSave();
   $('home').hidden = !!tab;
@@ -151,6 +171,7 @@ export function activate(tab?: ReaderTab) {
     input('match-case').checked = tab.matchCase;
     refreshFindCount();
     refreshToolbar();
+    refreshAnnotationToolbar();
     void renderSidebar();
     requestAnimationFrame(() => {
       if (getActiveTab() === tab && tab.pdf) tab.viewer.update();
@@ -197,18 +218,22 @@ export async function loadDocument(info: bridge.DocumentInfo) {
   const links = new PDFLinkService({ eventBus: bus, ignoreDestinationZoom: true });
   links.externalLinkEnabled = false;
   const find = new PDFFindController({ eventBus: bus, linkService: links });
-  const viewer = new PDFViewer({
+  const viewerOptions = {
     container,
     eventBus: bus,
     linkService: links,
     findController: find,
     textLayerMode: 1,
-    annotationMode: AnnotationMode.ENABLE,
+    annotationMode: AnnotationMode.ENABLE_FORMS,
+    annotationEditorMode: AnnotationEditorType.NONE,
+    enableHighlightFloatingButton: true,
+    annotationEditorHighlightColors: highlightColors,
     enablePermissions: true,
     enableAutoLinking: false,
     maxCanvasPixels: 16 * 1024 * 1024,
     imageResourcesPath: '/pdfjs/images/',
-  });
+  };
+  const viewer = new PDFViewer(viewerOptions);
   links.setViewer(viewer);
   const tab: ReaderTab = {
     info,
@@ -220,6 +245,12 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     find,
     task: null!,
     bookmarks: [],
+    modified: false,
+    savedAnnotationHash: '',
+    annotationMode: AnnotationEditorType.NONE,
+    annotationColors: { highlight: '#ffff00', text: '#1f2933', ink: '#f44336' },
+    annotationThickness: 3,
+    annotationFontSize: 14,
     disposed: false,
     query: '',
     matchCase: false,
@@ -228,6 +259,14 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     rendered: false,
   };
   tabs.push(tab);
+  bus.on('annotationeditoruimanager', (event: { uiManager: ReaderTab['annotationEditor'] }) => {
+    tab.annotationEditor = event.uiManager;
+  });
+  pane.addEventListener('input', event => {
+    if (event.target instanceof Element && event.target.closest('.annotationEditorLayer')) {
+      markAnnotationsModified(tab);
+    }
+  });
   activate(tab);
   let changedReadFailure = false;
   const load = loadPdf(info, tab, error => {
@@ -302,6 +341,10 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     };
     if (getActiveTab() === tab) refreshFindCount();
   });
+  bus.on('annotationeditormodechanged', (event: { mode: number }) => {
+    tab.annotationMode = event.mode;
+    if (getActiveTab() === tab) refreshAnnotationToolbar();
+  });
   try {
     const { pdf, canPrint, outline } = await load.loaded;
     tab.bookmarks = await bridge.bookmarks(info).catch(() => []);
@@ -310,6 +353,7 @@ export async function loadDocument(info: bridge.DocumentInfo) {
     tab.canPrint = canPrint;
     links.setDocument(pdf);
     viewer.setDocument(pdf);
+    trackModifiedState(tab);
     tab.outline = outline;
     if (tab.disposed) return;
     if (getActiveTab() === tab) {
@@ -330,7 +374,12 @@ export async function loadDocument(info: bridge.DocumentInfo) {
 
 export async function reloadDocument(info: bridge.DocumentInfo) {
   const tab = tabs.find(item => item.info.id === info.id);
-  if (!tab) return;
+  if (!tab || tab.disposed) return;
+  commitPendingAnnotations(tab);
+  if (tab.modified) {
+    notify(t('reload.unsaved', { name: info.name }));
+    return undefined;
+  }
   const position: ReadingPosition = {
     page: tab.viewer.currentPageNumber,
     pages: tab.pdf?.numPages ?? 1,
@@ -355,11 +404,19 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     bookmarks = await bridge.bookmarks(reloadedInfo).catch(() => []);
   } catch (error) {
     await load.task.destroy().catch(() => {});
-    if (changedReadFailure || readErrorCode(error) === 'document_changed') {
+    if (tab.modified) {
+      notify(t('reload.unsaved', { name: info.name }));
+    } else if (changedReadFailure || readErrorCode(error) === 'document_changed') {
       if (!changedReadFailure) notifyChangedRead(tab, info);
     } else {
       notify(t('reload.failed', { name: info.name }));
     }
+    return undefined;
+  }
+  commitPendingAnnotations(tab);
+  if (tab.disposed || tab.modified) {
+    await load.task.destroy().catch(() => {});
+    if (tab.modified) notify(t('reload.unsaved', { name: info.name }));
     return undefined;
   }
   const oldTask = tab.task;
@@ -367,16 +424,19 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     info: tab.info,
     pdf: tab.pdf,
     task: tab.task,
+    modified: tab.modified,
     canPrint: tab.canPrint,
     outline: tab.outline,
     bookmarks: tab.bookmarks,
     rendered: tab.rendered,
   };
   tab.links.setDocument(loaded.pdf);
+  tab.annotationEditor = undefined;
   tab.viewer.setDocument(loaded.pdf);
   tab.info = reloadedInfo;
   tab.task = load.task;
   tab.pdf = loaded.pdf;
+  tab.modified = false;
   tab.canPrint = loaded.canPrint;
   tab.outline = loaded.outline;
   tab.bookmarks = bookmarks;
@@ -389,6 +449,7 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     tab.info = oldState.info;
     tab.pdf = oldState.pdf;
     tab.task = oldState.task;
+    tab.modified = oldState.modified;
     tab.canPrint = oldState.canPrint;
     tab.outline = oldState.outline;
     tab.bookmarks = oldState.bookmarks;
@@ -397,6 +458,9 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
     notify(t('reload.failed', { name: info.name }));
     return undefined;
   }
+  trackModifiedState(tab);
+  refreshTabs();
+  if (getActiveTab() === tab) refreshAnnotationToolbar();
   loadReady = true;
   await oldTask.destroy().catch(() => {});
   if (getActiveTab() === tab) {
@@ -407,8 +471,14 @@ export async function reloadDocument(info: bridge.DocumentInfo) {
   return tab;
 }
 
-export async function closeTab(tab: ReaderTab) {
+export async function closeTab(tab: ReaderTab, resolveUnsaved = false) {
   if (tab.disposed) return;
+  commitPendingAnnotations(tab);
+  if (tab.modified && !resolveUnsaved) {
+    const choice = await requestUnsavedChoice([tab]);
+    if (choice === 'cancel') return;
+    if (choice === 'save' && !await saveAsCopy(tab)) return;
+  }
   try {
     await flushPosition(tab);
   } catch (error) {

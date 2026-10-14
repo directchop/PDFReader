@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::{Read, Seek, SeekFrom},
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -82,6 +82,11 @@ struct OpenDocument {
     pending_change: Option<(u64, Option<SystemTime>, u8)>,
 }
 
+struct SaveTarget {
+    source: PathBuf,
+    destination: PathBuf,
+}
+
 #[derive(Debug)]
 pub struct ReadCapability {
     file: Arc<Mutex<File>>,
@@ -119,6 +124,7 @@ pub struct Library {
     session_file: Option<PathBuf>,
     bookmarks_file: Option<PathBuf>,
     bookmark_store: HashMap<String, BookmarkEntry>,
+    save_tokens: HashMap<String, SaveTarget>,
 }
 
 impl Library {
@@ -573,6 +579,128 @@ impl Library {
             modified: generation.modified,
         })
     }
+
+    pub fn document_path(&self, id: &str) -> Result<PathBuf, String> {
+        self.documents
+            .get(id)
+            .map(|document| PathBuf::from(&document.info.path))
+            .ok_or_else(|| "document_closed".to_string())
+    }
+
+    pub fn issue_save_token(&mut self, id: &str, destination: &Path) -> Result<String, String> {
+        let source = self
+            .documents
+            .get(id)
+            .ok_or_else(|| "document_closed".to_string())?
+            .info
+            .path
+            .clone();
+        let destination = canonical_destination(destination)?;
+        let destination_key = destination.to_string_lossy().into_owned();
+        if self
+            .documents
+            .values()
+            .any(|document| document.info.path == destination_key)
+        {
+            return Err("cannot_overwrite_original".into());
+        }
+        let token = Uuid::new_v4().to_string();
+        self.save_tokens.insert(
+            token.clone(),
+            SaveTarget {
+                source: PathBuf::from(source),
+                destination,
+            },
+        );
+        Ok(token)
+    }
+
+    pub fn write_saved_copy(&mut self, token: &str, bytes: &[u8]) -> Result<String, String> {
+        let target = self
+            .save_tokens
+            .remove(token)
+            .ok_or_else(|| "invalid_save_token".to_string())?;
+        write_saved_copy_atomic(&target.source, &target.destination, bytes)?;
+        self.add_saved_copy_to_recent(&target.destination)
+    }
+
+    fn add_saved_copy_to_recent(&mut self, path: &Path) -> Result<String, String> {
+        let path = path.canonicalize().map_err(|error| error.to_string())?;
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let path = path.to_string_lossy().to_string();
+        self.recent.retain(|recent| recent.path != path);
+        self.recent.insert(
+            0,
+            RecentFile {
+                name: name.clone(),
+                path,
+                position: None,
+            },
+        );
+        self.recent.truncate(12);
+        if let Err(error) = self.persist_history() {
+            eprintln!("Could not save recent files: {error}");
+        }
+        Ok(name)
+    }
+}
+
+fn canonical_destination(destination: &Path) -> Result<PathBuf, String> {
+    if let Ok(path) = destination.canonicalize() {
+        return Ok(path);
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "cannot_save".to_string())?
+        .canonicalize()
+        .map_err(|_| "cannot_save".to_string())?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| "cannot_save".to_string())?;
+    Ok(parent.join(name))
+}
+
+fn validate_saved_copy(source: &Path, destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    if source == destination {
+        return Err("cannot_overwrite_original".into());
+    }
+    if bytes.len() as u64 > MAX_DOCUMENT {
+        return Err("too_large".into());
+    }
+    if !bytes.starts_with(b"%PDF-") {
+        return Err("not_pdf".into());
+    }
+    Ok(())
+}
+
+fn write_saved_copy_atomic(source: &Path, destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    validate_saved_copy(source, destination, bytes)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "cannot_save".to_string())?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| "cannot_save".to_string())?
+        .to_string_lossy();
+    let temporary = parent.join(format!(".{name}.{}.tmp", Uuid::new_v4()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(bytes).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        fs::rename(&temporary, destination).map_err(|error| error.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 fn timestamp() -> u64 {
@@ -938,5 +1066,70 @@ mod tests {
             .unwrap(),
             b"fixtur"
         );
+    }
+}
+
+#[cfg(test)]
+mod save_copy_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn pdf() -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"%PDF-1.7\nsource\n%%EOF").unwrap();
+        file
+    }
+
+    #[test]
+    fn refuses_source_path_and_non_pdf_data() {
+        let source = pdf();
+        let mut library = Library::default();
+        let info = library.open(source.path()).unwrap();
+        assert_eq!(
+            library.issue_save_token(&info.id, source.path()),
+            Err("cannot_overwrite_original".into())
+        );
+        assert_eq!(
+            validate_saved_copy(source.path(), Path::new("/tmp/copy.pdf"), b"not a PDF"),
+            Err("not_pdf".into())
+        );
+    }
+
+    #[test]
+    fn save_token_is_single_use_and_saved_file_is_added_to_recent_history() {
+        let source = pdf();
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("annotated.pdf");
+        let mut library = Library::default();
+        let info = library.open(source.path()).unwrap();
+        let token = library.issue_save_token(&info.id, &destination).unwrap();
+        let bytes = b"%PDF-1.7\nsaved annotations\n%%EOF";
+        assert_eq!(
+            library.write_saved_copy(&token, bytes).unwrap(),
+            "annotated.pdf"
+        );
+        assert_eq!(
+            library.write_saved_copy(&token, bytes),
+            Err("invalid_save_token".into())
+        );
+        assert_eq!(fs::read(destination).unwrap(), bytes);
+        assert_eq!(library.recent[0].name, "annotated.pdf");
+    }
+
+    #[test]
+    fn writes_through_a_same_directory_temporary_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.pdf");
+        let destination = directory.path().join("copy.pdf");
+        fs::write(&source, b"%PDF-1.7\nsource").unwrap();
+        fs::write(&destination, b"%PDF-1.4\nold").unwrap();
+        let bytes = b"%PDF-1.7\nreplacement";
+        write_saved_copy_atomic(&source, &destination, bytes).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), bytes);
+        assert!(!fs::read_dir(directory.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
     }
 }

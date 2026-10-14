@@ -119,6 +119,12 @@ export const bookmarks = async (info: DocumentInfo): Promise<Bookmark[]> => {
 export const saveBookmarks = (info: DocumentInfo, value: Bookmark[]): Promise<void> => desktop
   ? invoke('save_bookmarks', { id: info.id, bookmarks: value })
   : Promise.resolve(localStorage.setItem(`pdfreader.bookmarks:${info.name}:${info.size}`, JSON.stringify(value)));
+export const pickSavePath = (id: string, suggestedName: string): Promise<string | null> => desktop
+  ? invoke('pick_save_path', { id, suggestedName })
+  : Promise.resolve(null);
+export const writeSavedCopy = (token: string, bytes: Uint8Array): Promise<string> => desktop
+  ? invoke('write_saved_copy', bytes, { headers: { 'x-save-token': token } })
+  : Promise.reject(new Error('invalid_save_token'));
 export async function onDocumentsReady(callback: () => void) {
   if (desktop) return listen('documents-ready', callback);
   return () => {};
